@@ -1,0 +1,14 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ml-failure-analysis-framework"
+version = "0.1.0"
+description = "Internal evaluation & decision platform for model comparison, slicing, and cost-sensitive selection."
+requires-python = ">=3.10"
+dependencies = []
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

@@ -1,0 +1,11 @@
+# Prod overrides (more conservative runtime)
+app:
+  env: prod
+
+evaluation:
+  instability:
+    bootstrap_iters: 500
+    min_count: 100
+
+api:
+  reload: false

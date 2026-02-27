@@ -1,0 +1,94 @@
+app:
+  name: ml-failure-analysis-framework
+  env: dev
+
+paths:
+  data_raw: data/raw/datasets/sample.csv
+  data_processed_dir: data/processed
+  outputs_dir: outputs
+
+data:
+  dataset:
+    type: csv_classification
+    label_col: label
+    id_col: id
+    text_col: text          # optional, used for automatic slices + error examples
+  split:
+    seed: 42
+    test_size: 0.2
+    val_size: 0.1           # fraction of remaining after test split
+
+models:
+  registry:
+    - name: logreg
+      type: sklearn_logreg
+      params:
+        C: 1.0
+        max_iter: 500
+    - name: rf
+      type: sklearn_random_forest
+      params:
+        n_estimators: 300
+        max_depth: null
+        random_state: 42
+    - name: xgb
+      type: xgboost_classifier
+      enabled: false         # set true if you have xgboost installed
+      params:
+        n_estimators: 400
+        max_depth: 6
+        learning_rate: 0.05
+        subsample: 0.8
+        colsample_bytree: 0.8
+        random_state: 42
+
+evaluation:
+  task: classification
+  positive_label: 1          # used for binary cost evaluation
+  threshold_grid:
+    start: 0.05
+    stop: 0.95
+    step: 0.01
+  metrics:
+    - accuracy
+    - precision
+    - recall
+    - f1
+    - roc_auc
+    - pr_auc
+    - brier
+    - ece
+  calibration:
+    n_bins: 10
+  confidence_metrics:
+    high_confidence_threshold: 0.8
+  instability:
+    min_count: 50
+    bootstrap_iters: 200
+    ci_alpha: 0.05
+
+slicing:
+  slices_config: configs/slices.yaml
+  auto_slices:
+    enabled: true
+    text_length_bins: [0, 30, 80, 160, 1000000]   # characters
+    confidence_bins: [0.0, 0.5, 0.7, 0.85, 1.01]
+    label_freq_bins: [0.0, 0.01, 0.05, 0.2, 1.01] # relative frequency
+    difficulty:
+      enabled: true
+      method: ensemble_disagreement    # simple + robust: disagree => "hard"
+
+decision:
+  costs_config: configs/decision_costs.yaml
+  default_use_case: default
+  optimize_threshold: true
+  per_slice_optimization: true
+
+visualization:
+  enabled: true
+  max_slices_heatmap: 25
+
+api:
+  host: 0.0.0.0
+  port: 8000
+  reload: true

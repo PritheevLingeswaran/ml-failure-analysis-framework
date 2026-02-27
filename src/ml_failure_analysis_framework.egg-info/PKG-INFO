@@ -1,0 +1,7 @@
+Metadata-Version: 2.4
+Name: ml-failure-analysis-framework
+Version: 0.1.0
+Summary: Internal evaluation & decision platform for model comparison, slicing, and cost-sensitive selection.
+Requires-Python: >=3.10
+License-File: LICENSE
+Dynamic: license-file

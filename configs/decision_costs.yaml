@@ -1,0 +1,31 @@
+# Decision costs are the core of defensible model selection.
+# Costs can be defined per "use_case". Use-cases reflect business contexts.
+#
+# Binary classification convention:
+#  - predicted positive vs negative at threshold t
+#  - costs: TP, TN, FP, FN
+#
+# Costs are arbitrary units, but must reflect relative impact.
+
+use_cases:
+  default:
+    description: "Balanced default costs (demo only)"
+    binary:
+      TP: -1.0      # benefit
+      TN: 0.0
+      FP: 2.0       # false positive cost
+      FN: 5.0       # false negative cost (higher)
+  low_fp:
+    description: "Use-case where false positives are very expensive"
+    binary:
+      TP: -1.0
+      TN: 0.0
+      FP: 10.0
+      FN: 3.0
+  low_fn:
+    description: "Use-case where false negatives are very expensive"
+    binary:
+      TP: -1.0
+      TN: 0.0
+      FP: 2.0
+      FN: 20.0
