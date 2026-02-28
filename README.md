@@ -27,9 +27,14 @@ This system is built around one idea: **evaluation is about decisions, not score
 ### 1) Setup
 ```bash
 python -m venv .venv
-# Windows: .venv\Scripts\activate
+# Mac/Linux:
 source .venv/bin/activate
+# Windows:
+.venv\Scripts\activate
+
+pip install --upgrade pip
 pip install -r requirements.txt
+pip install -e 
 ```
 
 ### 2) Prepare sample data
