@@ -58,7 +58,11 @@ source .venv/bin/activate
 
 pip install --upgrade pip
 pip install -r requirements.txt
+<<<<<<< HEAD
 pip install -e .
+=======
+pip install -e 
+>>>>>>> b84af0dc3e30a55a51448884a8160622835ebeed
 ```
 
 ---
