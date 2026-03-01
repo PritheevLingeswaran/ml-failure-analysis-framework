@@ -9,6 +9,7 @@ import pandas as pd
 
 from src.evaluation_engine.metrics import compute_binary_metrics, compute_multiclass_metrics
 from src.evaluation_engine.instability import bootstrap_ci, instability_flag
+from src.evaluation_engine.advanced import calibrate_scores, threshold_ci_bootstrap
 from src.slicing.builder import build_slices
 from src.decision_engine.costs import load_costs, expected_cost_binary
 from src.decision_engine.thresholds import optimize_threshold
@@ -45,6 +46,7 @@ class Evaluator:
         y_score = df_pred["y_score"].to_numpy()
 
         n_bins = int(self.cfg["evaluation"]["calibration"]["n_bins"])
+        cal_method = str(self.cfg["evaluation"]["calibration"].get("method", "none"))
         threshold = float(df_pred.get("threshold", pd.Series([0.5])).iloc[0]) if "threshold" in df_pred.columns else 0.5
 
         # Threshold-free metrics exist, but decisions are thresholded.
@@ -61,11 +63,35 @@ class Evaluator:
         use_case_cfg = costs["use_cases"][use_case]["binary"]
 
         grid = self._threshold_grid()
-        best = optimize_threshold(y_true, y_score, grid, use_case_cfg)
+        cal = calibrate_scores(y_true, y_score, method=cal_method)
+        y_score_opt = cal.y_score_calibrated
+        best = optimize_threshold(y_true, y_score_opt, grid, use_case_cfg)
+        ci = threshold_ci_bootstrap(
+            y_true,
+            y_score_opt,
+            grid,
+            use_case_cfg,
+            iters=int(self.cfg["evaluation"]["instability"].get("bootstrap_iters", 200)),
+            alpha=float(self.cfg["evaluation"]["instability"].get("ci_alpha", 0.05)),
+            seed=int(self.cfg["data"]["split"]["seed"]),
+        )
         overall["best_threshold"] = best["threshold"]
         overall["expected_cost_at_best_threshold"] = best["expected_cost"]
+        overall["threshold_ci"] = ci["ci"]
 
-        return {"overall": overall, "slices": slices, "best": best}
+        return {
+            "overall": overall,
+            "slices": slices,
+            "best": best,
+            "calibration": {
+                "method": cal.method,
+                "optimized_on_calibrated_scores": bool(cal.method != "none"),
+            },
+            "threshold_uncertainty": {
+                "mean_threshold": ci["mean_threshold"],
+                "ci": ci["ci"],
+            },
+        }
 
     def _threshold_grid(self) -> np.ndarray:
         g = self.cfg["evaluation"]["threshold_grid"]

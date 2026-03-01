@@ -29,6 +29,8 @@ This system is built around one idea: **evaluation is about decisions, not leade
   - Configurable cost matrix (FP, FN, TP, TN)  
   - Expected loss computation  
   - Threshold optimization  
+  - Threshold uncertainty (bootstrap CI)
+  - Cost sensitivity scenarios (winner robustness)
   - Slice-level cost analysis  
 - Visualization artifacts:
   - Cost vs threshold curves  
@@ -37,11 +39,22 @@ This system is built around one idea: **evaluation is about decisions, not leade
   - Error distribution charts  
 - FastAPI service exposing:
   - `/evaluate`
+  - `/evaluate/async`
+  - `/jobs/{job_id}`
   - `/compare`
   - `/slices`
   - `/errors`
   - `/recommend`
+  - `/diagnostics`
+  - `/health`
+  - `/version`
 - Config-driven, testable, and auditable outputs  
+ - Advanced diagnostics:
+   - Probability calibration (`none`/`platt`/`isotonic`)
+   - Time-aware split option (`data.split.strategy: time`)
+   - Drift report (PSI/TV distance)
+   - Risky slice auto-discovery
+   - Fairness disparity slices for protected columns
 
 ---
 

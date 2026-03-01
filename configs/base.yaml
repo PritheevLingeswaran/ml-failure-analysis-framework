@@ -13,10 +13,13 @@ data:
     label_col: label
     id_col: id
     text_col: text          # optional, used for automatic slices + error examples
+    time_col: event_time    # optional, used for temporal split strategy
   split:
     seed: 42
     test_size: 0.2
     val_size: 0.1           # fraction of remaining after test split
+    strategy: random        # one of: random, time
+    time_col: event_time
 
 models:
   registry:
@@ -60,6 +63,7 @@ evaluation:
     - ece
   calibration:
     n_bins: 10
+    method: platt            # one of: none, platt, isotonic
   confidence_metrics:
     high_confidence_threshold: 0.8
   instability:
@@ -77,10 +81,19 @@ slicing:
     difficulty:
       enabled: true
       method: ensemble_disagreement    # simple + robust: disagree => "hard"
+    risky_discovery:
+      enabled: true
+      min_count: 50
+      min_error_lift: 0.05
+      max_cardinality: 15
+      top_k: 10
+    fairness:
+      enabled: true
+      protected_columns: ["region"]
 
 decision:
   costs_config: configs/decision_costs.yaml
-  default_use_case: default
+  default_use_case: fraud_strict
   optimize_threshold: true
   per_slice_optimization: true
 
@@ -92,3 +105,15 @@ api:
   host: 0.0.0.0
   port: 8000
   reload: true
+  cache_ttl_sec: 180
+
+advanced:
+  drift:
+    psi_warn: 0.2
+    tv_warn: 0.2
+  cost_sensitivity:
+    fp_multipliers: [0.5, 1.0, 1.5, 2.0]
+    fn_multipliers: [0.5, 1.0, 1.5, 2.0]
+  model_stack:
+    ensemble_avg:
+      enabled: true

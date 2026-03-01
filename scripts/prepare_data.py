@@ -45,6 +45,9 @@ def main() -> None:
     rng = np.random.default_rng(42)
     df["region"] = rng.choice(["US", "IN", "EU"], size=len(df), p=[0.55, 0.35, 0.10])
     df["amount"] = np.round(rng.lognormal(mean=6.5, sigma=0.6, size=len(df)), 2)
+    # Deterministic synthetic event time for temporal split experiments.
+    base_ts = pd.Timestamp("2024-01-01")
+    df["event_time"] = base_ts + pd.to_timedelta(np.arange(len(df)), unit="h")
 
     # Create a text column with different lengths correlated with label and region
     base_phrases = [

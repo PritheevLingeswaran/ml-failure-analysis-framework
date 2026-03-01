@@ -31,7 +31,12 @@ def _drop_cols(df: pd.DataFrame, label_col: str, id_col: str, text_col: str | No
     cols = [label_col, id_col]
     if text_col:
         cols.append(text_col)
-    return df.drop(columns=[c for c in cols if c in df.columns], errors="ignore").copy()
+    out = df.drop(columns=[c for c in cols if c in df.columns], errors="ignore").copy()
+    # Time columns are for temporal splits/drift checks, not model features.
+    dt_cols = out.select_dtypes(include=["datetime64[ns]", "datetime64[ns, UTC]"]).columns.tolist()
+    if dt_cols:
+        out = out.drop(columns=dt_cols, errors="ignore")
+    return out
 
 
 def _make_feature_schema(
@@ -58,7 +63,9 @@ def _make_feature_schema(
         axis=0,
         ignore_index=True,
     )
-    all_encoded = pd.get_dummies(all_raw, drop_first=False)
+    # Force dummy columns to numeric (not bool) so downstream dtype checks
+    # and sklearn estimators behave consistently across pandas versions.
+    all_encoded = pd.get_dummies(all_raw, drop_first=False, dtype=np.float32)
     return all_encoded.columns
 
 
@@ -76,7 +83,7 @@ def _feature_columns(
     - Reindexes to a stable schema
     """
     X_raw = _drop_cols(df, label_col, id_col, text_col)
-    X_enc = pd.get_dummies(X_raw, drop_first=False)
+    X_enc = pd.get_dummies(X_raw, drop_first=False, dtype=np.float32)
 
     # Align columns to the global schema
     X = X_enc.reindex(columns=feature_cols, fill_value=0)
@@ -120,6 +127,8 @@ def main() -> None:
         seed=int(cfg["data"]["split"]["seed"]),
         test_size=float(cfg["data"]["split"]["test_size"]),
         val_size=float(cfg["data"]["split"]["val_size"]),
+        strategy=str(cfg["data"]["split"].get("strategy", "random")),
+        time_col=cfg["data"]["split"].get("time_col"),
     )
 
     # --- Build stable feature schema across splits (critical) ---

@@ -10,8 +10,11 @@ from src.datasets.splits import make_splits
 from src.models.registry import build_models
 from src.evaluation_engine.predictions import save_predictions, load_predictions, build_run_id
 from src.evaluation_engine.evaluator import Evaluator
+from src.evaluation_engine.drift import compute_drift_report
+from src.decision_engine.sensitivity import build_cost_scenarios, run_cost_sensitivity
 from src.utils.paths import ensure_dir
 from src.utils.io import write_json
+from src.utils.tracking import write_experiment_record
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +26,9 @@ def _feature_columns(df: pd.DataFrame, label_col: str, id_col: str, text_col: st
     if text_col and text_col in df.columns:
         drop.append(text_col)
     X = df.drop(columns=[c for c in drop if c in df.columns])
+    dt_cols = X.select_dtypes(include=["datetime64[ns]", "datetime64[ns, UTC]"]).columns.tolist()
+    if dt_cols:
+        X = X.drop(columns=dt_cols, errors="ignore")
     y = df[label_col].astype(int)
     return X, y
 
@@ -35,6 +41,28 @@ def run_evaluate(cfg: Dict[str, Any]) -> None:
     run_id = build_run_id(cfg)
 
     write_json(outputs / "reports" / f"api_payload__{run_id}.json", result)
+    write_json(
+        outputs / "reports" / f"deployment_policy__{run_id}.json",
+        {
+            "run_id": run_id,
+            "use_case": cfg["decision"]["default_use_case"],
+            "recommended_model": result["decision"].get("recommended_model"),
+            "recommended_threshold": result["decision"].get("recommended_threshold"),
+            "notes": "Deploy this tuple together with the exact cost matrix and slice policy.",
+        },
+    )
+    write_experiment_record(
+        outputs,
+        run_id,
+        {
+            "run_id": run_id,
+            "split": result["split"],
+            "use_case": cfg["decision"]["default_use_case"],
+            "winner": result["comparison"].get("winner"),
+            "recommended_model": result["decision"].get("recommended_model"),
+            "recommended_threshold": result["decision"].get("recommended_threshold"),
+        },
+    )
     logger.info("Evaluation complete. Outputs written to %s", outputs)
 
 def run_evaluate_in_memory(cfg: Dict[str, Any], split: str, use_case: str) -> Dict[str, Any]:
@@ -54,6 +82,8 @@ def run_evaluate_in_memory(cfg: Dict[str, Any], split: str, use_case: str) -> Di
         seed=int(cfg["data"]["split"]["seed"]),
         test_size=float(cfg["data"]["split"]["test_size"]),
         val_size=float(cfg["data"]["split"]["val_size"]),
+        strategy=str(cfg["data"]["split"].get("strategy", "random")),
+        time_col=cfg["data"]["split"].get("time_col"),
     )
 
     splits = {"train": bundle.train, "val": bundle.val, "test": bundle.test}
@@ -76,6 +106,14 @@ def run_evaluate_in_memory(cfg: Dict[str, Any], split: str, use_case: str) -> Di
     for m in models:
         df_pred = load_predictions(cfg, m.name, split=split)
         predictions_by_model[m.name] = df_pred
+
+    # Optional lightweight model stack: mean-probability ensemble over available models.
+    ens_cfg = cfg.get("advanced", {}).get("model_stack", {}).get("ensemble_avg", {})
+    if ens_cfg.get("enabled", True) and len(predictions_by_model) >= 2:
+        first = next(iter(predictions_by_model.values())).copy()
+        stacked = np.vstack([dfp["y_score"].to_numpy() for dfp in predictions_by_model.values()])
+        first["y_score"] = np.mean(stacked, axis=0)
+        predictions_by_model["ensemble_avg"] = first
 
     # Add a simple difficulty proxy column if we have >=2 models:
     # hard if models disagree on class at 0.5 threshold
@@ -108,12 +146,38 @@ def run_evaluate_in_memory(cfg: Dict[str, Any], split: str, use_case: str) -> Di
         split=split,
         use_case=use_case,
     )
+
+    # Drift report: compare train vs selected split features.
+    drift = compute_drift_report(
+        train_df=bundle.train,
+        test_df=df_split,
+        exclude_cols=[dataset_cfg["label_col"], dataset_cfg["id_col"], dataset_cfg.get("text_col", "")],
+        psi_warn=float(cfg.get("advanced", {}).get("drift", {}).get("psi_warn", 0.2)),
+        tv_warn=float(cfg.get("advanced", {}).get("drift", {}).get("tv_warn", 0.2)),
+    )
+
+    # Cost sensitivity: winner robustness across FP/FN multipliers.
+    sens_cfg = cfg.get("advanced", {}).get("cost_sensitivity", {})
+    fp_mults = sens_cfg.get("fp_multipliers", [0.5, 1.0, 1.5, 2.0])
+    fn_mults = sens_cfg.get("fn_multipliers", [0.5, 1.0, 1.5, 2.0])
+    scenarios = build_cost_scenarios(costs, fp_mults=fp_mults, fn_mults=fn_mults)
+    model_arrays = {
+        mname: {
+            "y_true": dfp[dataset_cfg["label_col"]].to_numpy(),
+            "y_score": dfp["y_score"].to_numpy(),
+        }
+        for mname, dfp in predictions_by_model.items()
+    }
+    sensitivity = run_cost_sensitivity(model_arrays, grid=grid, scenarios=scenarios)
+
     return {
         "comparison": result.overall["comparison"],
         "per_model": per_model_payload,
         "slice_table": result.slices,
         "decision": result.decision,
         "errors": result.errors,
+        "drift": drift,
+        "cost_sensitivity": sensitivity,
         "run_id": result.run_id,
         "split": split,
     }

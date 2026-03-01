@@ -70,6 +70,8 @@ def build_slices(cfg: Dict[str, Any], df_features: pd.DataFrame, df_pred: pd.Dat
     # Auto slices
     if cfg["slicing"]["auto_slices"].get("enabled", True):
         slices.extend(_auto_slices(cfg, df, model_name=model_name, split=split, use_case_cfg=use_case_cfg))
+        slices.extend(_discover_risky_slices(cfg, df, model_name=model_name, split=split, use_case_cfg=use_case_cfg))
+        slices.extend(_fairness_slices(cfg, df, model_name=model_name, split=split, use_case_cfg=use_case_cfg))
 
     # Remove empty slices
     slices = [s for s in slices if s["count"] > 0]
@@ -98,9 +100,24 @@ def _missing_columns_for_query(query: str, cols) -> List[str]:
 
 def _slice_metrics(cfg: Dict[str, Any], df: pd.DataFrame, mask: pd.Series, slice_name: str, description: str, model_name: str, split: str, use_case_cfg: Dict[str, float]) -> Dict[str, Any]:
     n_bins = int(cfg["evaluation"]["calibration"]["n_bins"])
-    threshold = 0.5  # slice metrics will include cost-opt threshold
 
     sdf = df.loc[mask].copy()
+    if sdf.empty:
+        return {
+            "slice_name": slice_name,
+            "description": description,
+            "model_name": model_name,
+            "split": split,
+            "count": 0,
+            "metrics": {},
+            "decision": {},
+            "instability": {
+                "unstable": True,
+                "reason": "empty_slice",
+                "sample_count": 0,
+            },
+        }
+
     y_true = sdf[cfg["data"]["dataset"]["label_col"]].to_numpy()
     y_score = sdf["y_score"].to_numpy()
 
@@ -180,4 +197,111 @@ def _auto_slices(cfg: Dict[str, Any], df: pd.DataFrame, model_name: str, split: 
         out.append(_slice_metrics(cfg, df, pd.Series(~hard_mask, index=df.index), "easy_examples", "Auto: easy examples", model_name, split, use_case_cfg))
         out.append(_slice_metrics(cfg, df, pd.Series(hard_mask, index=df.index), "hard_examples", "Auto: hard examples", model_name, split, use_case_cfg))
 
+    return out
+
+
+def _discover_risky_slices(cfg: Dict[str, Any], df: pd.DataFrame, model_name: str, split: str, use_case_cfg: Dict[str, float]) -> List[Dict[str, Any]]:
+    auto = cfg["slicing"]["auto_slices"]
+    risky_cfg = auto.get("risky_discovery", {})
+    if not risky_cfg.get("enabled", True):
+        return []
+
+    label_col = cfg["data"]["dataset"]["label_col"]
+    ignore = {label_col, "y_score", cfg["data"]["dataset"].get("id_col"), cfg["data"]["dataset"].get("text_col")}
+    y_true = df[label_col].to_numpy().astype(int)
+    y_pred = (df["y_score"].to_numpy() >= 0.5).astype(int)
+    err = (y_true != y_pred).astype(int)
+    global_err = float(np.mean(err)) if len(err) else 0.0
+
+    min_count = int(risky_cfg.get("min_count", 50))
+    min_lift = float(risky_cfg.get("min_error_lift", 0.05))
+    top_k = int(risky_cfg.get("top_k", 10))
+    rows = []
+    for c in df.columns:
+        if c in ignore:
+            continue
+        s = df[c]
+        if pd.api.types.is_numeric_dtype(s):
+            try:
+                bins = pd.qcut(s, q=min(4, max(2, s.nunique())), duplicates="drop")
+            except Exception:
+                continue
+            groups = bins.astype(str)
+        else:
+            if s.nunique(dropna=True) > int(risky_cfg.get("max_cardinality", 15)):
+                continue
+            groups = s.fillna("__nan__").astype(str)
+
+        for val, idx in groups.groupby(groups).groups.items():
+            mask = df.index.isin(idx)
+            cnt = int(np.sum(mask))
+            if cnt < min_count:
+                continue
+            er = float(np.mean(err[mask]))
+            lift = er - global_err
+            if lift < min_lift:
+                continue
+            rows.append(
+                {
+                    "name": f"risky:{c}={val}",
+                    "desc": f"Auto risky slice on {c} (error lift={lift:.3f})",
+                    "mask": pd.Series(mask, index=df.index),
+                    "lift": lift,
+                }
+            )
+
+    rows = sorted(rows, key=lambda r: r["lift"], reverse=True)[:top_k]
+    out = []
+    for r in rows:
+        out.append(_slice_metrics(cfg, df, r["mask"], r["name"], r["desc"], model_name, split, use_case_cfg))
+    return out
+
+
+def _fairness_slices(cfg: Dict[str, Any], df: pd.DataFrame, model_name: str, split: str, use_case_cfg: Dict[str, float]) -> List[Dict[str, Any]]:
+    fair_cfg = cfg["slicing"]["auto_slices"].get("fairness", {})
+    if not fair_cfg.get("enabled", False):
+        return []
+    cols = fair_cfg.get("protected_columns", []) or []
+    label_col = cfg["data"]["dataset"]["label_col"]
+
+    overall = _slice_metrics(
+        cfg,
+        df,
+        pd.Series(np.ones(len(df), dtype=bool), index=df.index),
+        "__overall__",
+        "overall",
+        model_name,
+        split,
+        use_case_cfg,
+    )
+    cm = overall.get("metrics", {}).get("confusion", {})
+    overall_fpr = cm.get("fp", 0) / max(1, cm.get("fp", 0) + cm.get("tn", 0))
+    overall_fnr = cm.get("fn", 0) / max(1, cm.get("fn", 0) + cm.get("tp", 0))
+
+    out = []
+    for c in cols:
+        if c not in df.columns:
+            continue
+        for v, sub in df.groupby(df[c].fillna("__nan__").astype(str)):
+            mask = pd.Series(df[c].fillna("__nan__").astype(str).eq(v), index=df.index)
+            s = _slice_metrics(
+                cfg,
+                df,
+                mask,
+                f"fairness:{c}={v}",
+                f"Fairness slice for {c}={v}",
+                model_name,
+                split,
+                use_case_cfg,
+            )
+            cm2 = s.get("metrics", {}).get("confusion", {})
+            fpr = cm2.get("fp", 0) / max(1, cm2.get("fp", 0) + cm2.get("tn", 0))
+            fnr = cm2.get("fn", 0) / max(1, cm2.get("fn", 0) + cm2.get("tp", 0))
+            s["disparity"] = {
+                "protected_column": c,
+                "value": v,
+                "fpr_gap_vs_overall": float(fpr - overall_fpr),
+                "fnr_gap_vs_overall": float(fnr - overall_fnr),
+            }
+            out.append(s)
     return out

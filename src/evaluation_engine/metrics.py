@@ -25,6 +25,21 @@ def expected_calibration_error(y_true: np.ndarray, y_prob_pos: np.ndarray, n_bin
     return float(ece)
 
 def compute_binary_metrics(y_true: np.ndarray, y_prob_pos: np.ndarray, threshold: float, n_bins_ece: int) -> Dict[str, Any]:
+    if len(y_true) == 0 or len(y_prob_pos) == 0:
+        return {
+            "threshold": float(threshold),
+            "accuracy": float("nan"),
+            "precision": float("nan"),
+            "recall": float("nan"),
+            "f1": float("nan"),
+            "roc_auc": float("nan"),
+            "pr_auc": float("nan"),
+            "brier": float("nan"),
+            "ece": float("nan"),
+            "confusion": {"tn": 0, "fp": 0, "fn": 0, "tp": 0},
+            "avg_confidence": float("nan"),
+        }
+
     y_pred = (y_prob_pos >= threshold).astype(int)
     out: Dict[str, Any] = {}
     out["threshold"] = float(threshold)
