@@ -3,6 +3,9 @@ import logging
 from pathlib import Path
 from typing import Any, Dict
 import numpy as np
+import matplotlib
+
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 from src.utils.paths import ensure_dir

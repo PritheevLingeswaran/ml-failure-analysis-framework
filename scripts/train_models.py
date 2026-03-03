@@ -87,6 +87,7 @@ def _feature_columns(
 
     # Align columns to the global schema
     X = X_enc.reindex(columns=feature_cols, fill_value=0)
+    X = X.astype({c: "int64" for c in X.select_dtypes(include=["bool"]).columns})
 
     # Ensure everything is numeric
     # (If this fails, you still have a non-encoded column leaking in.)
