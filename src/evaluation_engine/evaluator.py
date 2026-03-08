@@ -18,6 +18,7 @@ from src.visualization.plots import plot_all
 
 from src.utils.io import write_json
 from src.utils.paths import ensure_dir
+from src.utils.timing import TimingCollector
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +41,7 @@ class Evaluator:
         df_features: pd.DataFrame,
         split: str,
         use_case: str,
+        timing_collector: TimingCollector | None = None,
     ) -> Dict[str, Any]:
         label_col = self.cfg["data"]["dataset"]["label_col"]
         y_true = df_pred[label_col].to_numpy()
@@ -56,7 +58,11 @@ class Evaluator:
         overall["count"] = int(len(df_pred))
 
         # Slice metrics
-        slices = build_slices(self.cfg, df_features, df_pred, model_name=model_name, split=split)
+        if timing_collector is None:
+            slices = build_slices(self.cfg, df_features, df_pred, model_name=model_name, split=split)
+        else:
+            with timing_collector.stage("slicing"):
+                slices = build_slices(self.cfg, df_features, df_pred, model_name=model_name, split=split)
 
         # Decision metrics / threshold optimization
         costs = load_costs(self.cfg)
@@ -65,16 +71,29 @@ class Evaluator:
         grid = self._threshold_grid()
         cal = calibrate_scores(y_true, y_score, method=cal_method)
         y_score_opt = cal.y_score_calibrated
-        best = optimize_threshold(y_true, y_score_opt, grid, use_case_cfg)
-        ci = threshold_ci_bootstrap(
-            y_true,
-            y_score_opt,
-            grid,
-            use_case_cfg,
-            iters=int(self.cfg["evaluation"]["instability"].get("bootstrap_iters", 200)),
-            alpha=float(self.cfg["evaluation"]["instability"].get("ci_alpha", 0.05)),
-            seed=int(self.cfg["data"]["split"]["seed"]),
-        )
+        if timing_collector is None:
+            best = optimize_threshold(y_true, y_score_opt, grid, use_case_cfg)
+            ci = threshold_ci_bootstrap(
+                y_true,
+                y_score_opt,
+                grid,
+                use_case_cfg,
+                iters=int(self.cfg["evaluation"]["instability"].get("bootstrap_iters", 200)),
+                alpha=float(self.cfg["evaluation"]["instability"].get("ci_alpha", 0.05)),
+                seed=int(self.cfg["data"]["split"]["seed"]),
+            )
+        else:
+            with timing_collector.stage("decision_optimization"):
+                best = optimize_threshold(y_true, y_score_opt, grid, use_case_cfg)
+                ci = threshold_ci_bootstrap(
+                    y_true,
+                    y_score_opt,
+                    grid,
+                    use_case_cfg,
+                    iters=int(self.cfg["evaluation"]["instability"].get("bootstrap_iters", 200)),
+                    alpha=float(self.cfg["evaluation"]["instability"].get("ci_alpha", 0.05)),
+                    seed=int(self.cfg["data"]["split"]["seed"]),
+                )
         overall["best_threshold"] = best["threshold"]
         overall["expected_cost_at_best_threshold"] = best["expected_cost"]
         overall["threshold_ci"] = ci["ci"]
@@ -104,19 +123,23 @@ class Evaluator:
         features_by_split: Dict[str, pd.DataFrame],
         split: str,
         use_case: str,
+        per_model: Dict[str, Any] | None = None,
+        timing_collector: TimingCollector | None = None,
     ) -> EvaluationResult:
         from src.evaluation_engine.predictions import build_run_id
         run_id = build_run_id(self.cfg)
 
-        per_model = {}
-        for model_name, df_pred in predictions_by_model.items():
-            per_model[model_name] = self.evaluate_predictions(
-                model_name=model_name,
-                df_pred=df_pred,
-                df_features=features_by_split[split],
-                split=split,
-                use_case=use_case,
-            )
+        if per_model is None:
+            per_model = {}
+            for model_name, df_pred in predictions_by_model.items():
+                per_model[model_name] = self.evaluate_predictions(
+                    model_name=model_name,
+                    df_pred=df_pred,
+                    df_features=features_by_split[split],
+                    split=split,
+                    use_case=use_case,
+                    timing_collector=timing_collector,
+                )
 
         # Compare models by expected cost at their optimized thresholds
         comparison = self._compare_models(per_model)
@@ -125,20 +148,34 @@ class Evaluator:
         decision = self._recommend(per_model, use_case=use_case)
 
         # Error analysis (top errors, clusters)
-        errors = analyze_errors(self.cfg, predictions_by_model, features_by_split[split], use_case=use_case)
+        if timing_collector is None:
+            errors = analyze_errors(self.cfg, predictions_by_model, features_by_split[split], use_case=use_case)
+        else:
+            with timing_collector.stage("error_analysis"):
+                errors = analyze_errors(self.cfg, predictions_by_model, features_by_split[split], use_case=use_case)
 
         # Visualization + report outputs
         if self.cfg.get("visualization", {}).get("enabled", True):
-            plot_all(self.cfg, per_model=per_model, comparison=comparison, decision=decision)
+            if timing_collector is None:
+                plot_all(self.cfg, per_model=per_model, comparison=comparison, decision=decision)
+            else:
+                with timing_collector.stage("plotting"):
+                    plot_all(self.cfg, per_model=per_model, comparison=comparison, decision=decision)
 
         # Persist machine-readable summary
         outputs = Path(self.cfg["paths"]["outputs_dir"])
         ensure_dir(outputs / "metrics")
         ensure_dir(outputs / "reports")
 
-        write_json(outputs / "metrics" / f"comparison__{run_id}__{split}.json", comparison)
-        write_json(outputs / "metrics" / f"decision__{run_id}__{split}.json", decision)
-        write_json(outputs / "reports" / f"errors__{run_id}__{split}.json", errors)
+        if timing_collector is None:
+            write_json(outputs / "metrics" / f"comparison__{run_id}__{split}.json", comparison)
+            write_json(outputs / "metrics" / f"decision__{run_id}__{split}.json", decision)
+            write_json(outputs / "reports" / f"errors__{run_id}__{split}.json", errors)
+        else:
+            with timing_collector.stage("write_outputs"):
+                write_json(outputs / "metrics" / f"comparison__{run_id}__{split}.json", comparison)
+                write_json(outputs / "metrics" / f"decision__{run_id}__{split}.json", decision)
+                write_json(outputs / "reports" / f"errors__{run_id}__{split}.json", errors)
 
         overall = {"run_id": run_id, "split": split, "comparison": comparison}
         slices = self._collect_slice_table(per_model)

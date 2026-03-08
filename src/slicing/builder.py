@@ -141,6 +141,7 @@ def _slice_metrics(cfg: Dict[str, Any], df: pd.DataFrame, mask: pd.Series, slice
         "split": split,
         "count": int(len(sdf)),
         "metrics": base_metrics,
+        "metrics_validity": base_metrics.get("metrics_validity", {}),
         "decision": {
             "best_threshold": best["threshold"],
             "expected_cost": best["expected_cost"],

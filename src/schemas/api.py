@@ -24,3 +24,7 @@ class RecommendResponse(BaseModel):
     recommended_threshold: float
     rationale: Dict[str, Any]
     per_slice_recommendations: Optional[List[Dict[str, Any]]] = None
+
+
+class QualityResponse(BaseModel):
+    quality: Dict[str, Any]

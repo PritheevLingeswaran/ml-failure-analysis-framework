@@ -22,6 +22,7 @@ def build_run_id(cfg: Dict[str, Any]) -> str:
         "data": cfg.get("data", {}),
         "models": cfg.get("models", {}),
         "evaluation": cfg.get("evaluation", {}),
+        "evaluation_quality": cfg.get("evaluation_quality", {}),
         "slicing": cfg.get("slicing", {}),
         "decision": cfg.get("decision", {}),
     })

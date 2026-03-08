@@ -31,3 +31,14 @@ Small slices lie easily. This framework flags:
 - (Extendable) CI-based instability via bootstrap
 
 Treat unstable slices as **hypothesis generators**, not decision drivers.
+
+## Metric validity on slices
+Some positive-class metrics are undefined on single-class slices.
+The framework now makes that explicit instead of silently coercing them to zero.
+
+- If a slice has no positive labels, positive-class recall is `null` and cannot trigger a metric-drop diagnostic.
+- If a slice has no predicted positives at the evaluated threshold, precision is `null` and cannot trigger a metric-drop diagnostic.
+- `f1` is `null` whenever its precision/recall inputs are undefined.
+- Slice outputs include `metrics_validity` with boolean validity flags and reasons such as `no_positive_labels`, `no_predicted_positives`, and `single_class_slice`.
+
+This matters because slices like `label == 0` can otherwise create bogus "recall dropped to zero" findings even though positive recall is not a meaningful quantity on that slice.

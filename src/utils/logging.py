@@ -15,7 +15,9 @@ def setup_logging(cfg: Dict[str, Any]) -> None:
     """
     logging_cfg_path = cfg.get("logging", {}).get("config_path", "configs/logging.yaml")
     if Path(logging_cfg_path).exists():
-        logging.config.dictConfig(load_yaml(logging_cfg_path))
+        logging_cfg = load_yaml(logging_cfg_path)
+        logging_cfg.setdefault("disable_existing_loggers", False)
+        logging.config.dictConfig(logging_cfg)
     else:
         logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(name)s | %(message)s")
 

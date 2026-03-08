@@ -9,7 +9,7 @@ from typing import Any, Dict
 from concurrent.futures import ThreadPoolExecutor
 from fastapi import APIRouter, HTTPException, Request
 
-from src.schemas.api import EvaluateRequest, CompareResponse, SliceMetricsResponse, ErrorsResponse, RecommendResponse
+from src.schemas.api import EvaluateRequest, CompareResponse, SliceMetricsResponse, ErrorsResponse, RecommendResponse, QualityResponse
 from src.decision_engine.costs import load_costs
 from src.evaluation_engine.predictions import build_run_id
 
@@ -158,3 +158,10 @@ def diagnostics(request: Request):
         "drift": result.get("drift", {}),
         "cost_sensitivity": result.get("cost_sensitivity", {}),
     }
+
+
+@router.get("/quality", response_model=QualityResponse)
+def quality(request: Request):
+    cfg = _api_cfg(request.app.state.cfg)
+    result = _evaluate_cached(cfg, split="test", use_case=cfg["decision"]["default_use_case"])
+    return QualityResponse(quality=result["eval_quality"])

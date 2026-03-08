@@ -1,6 +1,7 @@
 from __future__ import annotations
 import logging
 from pathlib import Path
+from time import perf_counter
 from typing import Any, Dict, Tuple
 import pandas as pd
 import numpy as np
@@ -10,11 +11,13 @@ from src.datasets.splits import make_splits
 from src.models.registry import build_models
 from src.evaluation_engine.predictions import save_predictions, load_predictions, build_run_id
 from src.evaluation_engine.evaluator import Evaluator
+from src.evaluation_engine.eval_quality import compute_eval_quality, render_eval_quality_markdown
 from src.evaluation_engine.drift import compute_drift_report
 from src.decision_engine.sensitivity import build_cost_scenarios, run_cost_sensitivity
 from src.utils.paths import ensure_dir
 from src.utils.io import write_json
 from src.utils.tracking import write_experiment_record
+from src.utils.timing import TimingCollector
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +69,8 @@ def run_evaluate(cfg: Dict[str, Any]) -> None:
     logger.info("Evaluation complete. Outputs written to %s", outputs)
 
 def run_evaluate_in_memory(cfg: Dict[str, Any], split: str, use_case: str) -> Dict[str, Any]:
+    run_start = perf_counter()
+    timings = TimingCollector()
     dataset_cfg = cfg["data"]["dataset"]
     loader = CSVClassificationDataset(
         path=cfg["paths"]["data_raw"],
@@ -73,18 +78,20 @@ def run_evaluate_in_memory(cfg: Dict[str, Any], split: str, use_case: str) -> Di
         id_col=dataset_cfg["id_col"],
         text_col=dataset_cfg.get("text_col"),
     )
-    df = loader.load()
-    bundle = make_splits(
-        df=df,
-        label_col=dataset_cfg["label_col"],
-        id_col=dataset_cfg["id_col"],
-        text_col=dataset_cfg.get("text_col"),
-        seed=int(cfg["data"]["split"]["seed"]),
-        test_size=float(cfg["data"]["split"]["test_size"]),
-        val_size=float(cfg["data"]["split"]["val_size"]),
-        strategy=str(cfg["data"]["split"].get("strategy", "random")),
-        time_col=cfg["data"]["split"].get("time_col"),
-    )
+    with timings.stage("load_data"):
+        df = loader.load()
+    with timings.stage("make_splits"):
+        bundle = make_splits(
+            df=df,
+            label_col=dataset_cfg["label_col"],
+            id_col=dataset_cfg["id_col"],
+            text_col=dataset_cfg.get("text_col"),
+            seed=int(cfg["data"]["split"]["seed"]),
+            test_size=float(cfg["data"]["split"]["test_size"]),
+            val_size=float(cfg["data"]["split"]["val_size"]),
+            strategy=str(cfg["data"]["split"].get("strategy", "random")),
+            time_col=cfg["data"]["split"].get("time_col"),
+        )
 
     splits = {"train": bundle.train, "val": bundle.val, "test": bundle.test}
     df_split = splits[split].reset_index(drop=True)
@@ -101,11 +108,12 @@ def run_evaluate_in_memory(cfg: Dict[str, Any], split: str, use_case: str) -> Di
     features = df_split[feat_cols].copy()
 
     # Load predictions (must exist)
-    models = build_models(cfg)
-    predictions_by_model = {}
-    for m in models:
-        df_pred = load_predictions(cfg, m.name, split=split)
-        predictions_by_model[m.name] = df_pred
+    with timings.stage("load_predictions"):
+        models = build_models(cfg)
+        predictions_by_model = {}
+        for m in models:
+            df_pred = load_predictions(cfg, m.name, split=split)
+            predictions_by_model[m.name] = df_pred
 
     # Optional lightweight model stack: mean-probability ensemble over available models.
     ens_cfg = cfg.get("advanced", {}).get("model_stack", {}).get("ensemble_avg", {})
@@ -132,11 +140,20 @@ def run_evaluate_in_memory(cfg: Dict[str, Any], split: str, use_case: str) -> Di
     grid = _threshold_grid(cfg)
     costs = load_costs(cfg)["use_cases"][use_case]["binary"]
     per_model_payload = {}
+    model_scores = {}
     for mname, dfp in predictions_by_model.items():
         y_true = dfp[dataset_cfg["label_col"]].to_numpy()
         y_score = dfp["y_score"].to_numpy()
+        model_scores[mname] = {"y_true": y_true, "y_score": y_score}
         expected_costs = [expected_cost_binary(y_true, y_score, float(t), costs) for t in grid]
-        payload = evaluator.evaluate_predictions(mname, dfp, features, split=split, use_case=use_case)
+        payload = evaluator.evaluate_predictions(
+            mname,
+            dfp,
+            features,
+            split=split,
+            use_case=use_case,
+            timing_collector=timings,
+        )
         payload["cost_curve"] = {"thresholds": grid.tolist(), "expected_costs": expected_costs}
         per_model_payload[mname] = payload
 
@@ -145,6 +162,8 @@ def run_evaluate_in_memory(cfg: Dict[str, Any], split: str, use_case: str) -> Di
         features_by_split={split: features},
         split=split,
         use_case=use_case,
+        per_model=per_model_payload,
+        timing_collector=timings,
     )
 
     # Drift report: compare train vs selected split features.
@@ -170,6 +189,63 @@ def run_evaluate_in_memory(cfg: Dict[str, Any], split: str, use_case: str) -> Di
     }
     sensitivity = run_cost_sensitivity(model_arrays, grid=grid, scenarios=scenarios)
 
+    eval_quality = compute_eval_quality(
+        cfg,
+        run_id=result.run_id,
+        split=split,
+        use_case=use_case,
+        split_count=len(df_split),
+        total_count=len(df),
+        per_model=per_model_payload,
+        model_scores=model_scores,
+        decision=result.decision,
+        runtime={"total_sec": 0.0, "stages": timings.stage_totals()},
+    )
+
+    outputs = Path(cfg["paths"]["outputs_dir"])
+    ensure_dir(outputs / "metrics")
+    ensure_dir(outputs / "reports")
+    with timings.stage("write_outputs"):
+        write_json(outputs / "metrics" / f"eval_quality__{result.run_id}__{split}.json", eval_quality)
+        (outputs / "reports" / f"eval_quality__{result.run_id}__{split}.md").write_text(
+            render_eval_quality_markdown(eval_quality),
+            encoding="utf-8",
+        )
+
+    total_runtime_sec = round(perf_counter() - run_start, 6)
+    runtime = {
+        "total_sec": total_runtime_sec,
+        "stages": timings.stage_totals(),
+    }
+    eval_quality["runtime"] = runtime
+    timings_payload = {
+        "run_id": result.run_id,
+        "split": split,
+        "total_runtime_sec": total_runtime_sec,
+        "stage_totals": runtime["stages"],
+        "events": timings.events_payload(),
+    }
+    write_json(outputs / "metrics" / f"eval_quality__{result.run_id}__{split}.json", eval_quality)
+    (outputs / "reports" / f"eval_quality__{result.run_id}__{split}.md").write_text(
+        render_eval_quality_markdown(eval_quality),
+        encoding="utf-8",
+    )
+    write_json(outputs / "metrics" / f"timings__{result.run_id}__{split}.json", timings_payload)
+    logger.info(
+        "total_runtime_sec=%.6f stage_breakdown=%s",
+        total_runtime_sec,
+        runtime["stages"],
+    )
+    logger.info(
+        "eval_quality run_id=%s split=%s dataset_size=%s models_compared=%s slice_diagnostics=%s reduction_pct=%.6f",
+        result.run_id,
+        split,
+        eval_quality["dataset_size"],
+        eval_quality["models_compared"],
+        eval_quality["slice_diagnostics"]["diagnostics_found"],
+        eval_quality["business_loss_reduction"]["reduction_pct"],
+    )
+
     return {
         "comparison": result.overall["comparison"],
         "per_model": per_model_payload,
@@ -178,6 +254,7 @@ def run_evaluate_in_memory(cfg: Dict[str, Any], split: str, use_case: str) -> Di
         "errors": result.errors,
         "drift": drift,
         "cost_sensitivity": sensitivity,
+        "eval_quality": eval_quality,
         "run_id": result.run_id,
         "split": split,
     }
