@@ -71,11 +71,7 @@ source .venv/bin/activate
 
 pip install --upgrade pip
 pip install -r requirements.txt
-<<<<<<< HEAD
 pip install -e .
-=======
-pip install -e 
->>>>>>> b84af0dc3e30a55a51448884a8160622835ebeed
 ```
 
 ---
@@ -155,6 +151,29 @@ Use the API to compare models, inspect slice-level failures, analyze error patte
 
 This is not an AutoML system or a research notebook.  
 The objective is **repeatable, transparent, cost-aware evaluation** with slice-level visibility for real production decisions.
+
+---
+
+## CI troubleshooting
+
+Run the same core checks locally before pushing:
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+python -m pip install -e .
+python -m compileall -q src scripts evaluation tests
+PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 MPLBACKEND=Agg python -m pytest tests -q
+```
+
+Typical CI failure causes:
+
+- Wrong interpreter: CI is pinned to Python 3.11, so reproduce with 3.11 locally when debugging version-specific issues.
+- Missing or stale dependencies: reinstall from `requirements.txt` and run `python -m pip freeze` to confirm the environment matches CI.
+- Pytest plugin interference: CI disables auto-loaded third-party plugins with `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1` to keep test discovery predictable.
+- Filesystem assumptions: tests should write only to temporary directories such as `tmp_path`, not repo-level `outputs/` or machine-specific paths.
 
 ---
 
