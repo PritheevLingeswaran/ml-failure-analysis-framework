@@ -1,0 +1,19 @@
+# Dev overrides
+app:
+  env: dev
+
+models:
+  registry:
+    - name: logreg
+      type: sklearn_logreg
+      params:
+        C: 1.0
+        max_iter: 500
+    - name: rf
+      type: sklearn_random_forest
+      params:
+        n_estimators: 200
+        random_state: 42
+
+api:
+  reload: false

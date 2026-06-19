@@ -1,0 +1,19 @@
+# Rule-based slices.
+# Each slice is evaluated via pandas query() in a restricted way.
+# If a column doesn't exist in the dataset, the slice will be skipped (logged).
+
+slices:
+  - name: "label_positive"
+    query: "label == 1"
+    description: "Positive label examples"
+  - name: "label_negative"
+    query: "label == 0"
+    description: "Negative label examples"
+
+  # Example business slices (only apply if these columns exist):
+  - name: "region_us"
+    query: "region == 'US'"
+    description: "Region=US"
+  - name: "high_value"
+    query: "amount >= 1000"
+    description: "High transaction amount (>=1000)"

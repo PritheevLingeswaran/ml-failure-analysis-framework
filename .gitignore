@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+.ipynb_checkpoints/
+outputs/
+data/processed/
+data/raw/datasets/*.csv
+*.joblib
+*.log
+.DS_Store
+.tmp/
+.env

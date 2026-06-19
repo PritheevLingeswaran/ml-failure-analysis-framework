@@ -1,0 +1,33 @@
+# Decision costs are the core of defensible model selection.
+# Costs can be defined per "use_case". Use-cases reflect business contexts.
+#
+# Binary classification convention:
+#  - predicted positive vs negative at threshold t
+#  - costs: TP, TN, FP, FN
+#
+# Costs are arbitrary units, but must reflect relative impact.
+
+use_cases:
+  fraud_strict:
+    description: "Missing fraud is very expensive"
+    binary:
+      TP: -2.0
+      TN: 0.0
+      FP: 3.0
+      FN: 25.0
+
+  churn_recovery:
+    description: "Missing at-risk users is costly, outreach is moderate"
+    binary:
+      TP: -3.0
+      TN: 0.0
+      FP: 1.5
+      FN: 12.0
+
+  support_triage:
+    description: "Extra escalations are expensive, misses are moderate"
+    binary:
+      TP: -1.0
+      TN: 0.0
+      FP: 8.0
+      FN: 6.0
