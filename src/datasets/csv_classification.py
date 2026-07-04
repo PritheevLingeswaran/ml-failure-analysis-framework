@@ -9,11 +9,19 @@ from src.utils.io import read_csv
 logger = logging.getLogger(__name__)
 
 class CSVClassificationDataset(DatasetLoader):
-    def __init__(self, path: str, label_col: str, id_col: str, text_col: str | None = None):
+    def __init__(
+        self,
+        path: str,
+        label_col: str,
+        id_col: str,
+        text_col: str | None = None,
+        time_col: str | None = None,
+    ):
         self.path = path
         self.label_col = label_col
         self.id_col = id_col
         self.text_col = text_col
+        self.time_col = time_col
 
     def load(self) -> pd.DataFrame:
         df = read_csv(self.path)
@@ -24,6 +32,13 @@ class CSVClassificationDataset(DatasetLoader):
             df[self.id_col] = [f"row_{i}" for i in range(len(df))]
         if self.label_col not in df.columns:
             raise ValueError(f"label_col '{self.label_col}' not in dataset columns={list(df.columns)}")
+
+        # Parse the time column to a real datetime dtype. Read from CSV it arrives
+        # as a string, which would otherwise be one-hot encoded into thousands of
+        # junk feature columns (one per unique timestamp) — corrupting the models
+        # and drift report. As datetime it is correctly excluded from features.
+        if self.time_col and self.time_col in df.columns:
+            df[self.time_col] = pd.to_datetime(df[self.time_col], errors="coerce")
 
         # Remove rows with missing labels
         df = df.dropna(subset=[self.label_col]).copy()

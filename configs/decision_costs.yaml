@@ -31,3 +31,11 @@ use_cases:
       TN: 0.0
       FP: 8.0
       FN: 6.0
+
+  diagnostic_screening:
+    description: "Missing a malignant case is catastrophic; extra review is moderate"
+    binary:
+      TP: -5.0
+      TN: 0.0
+      FP: 4.0
+      FN: 60.0

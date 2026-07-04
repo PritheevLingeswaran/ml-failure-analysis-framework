@@ -77,6 +77,7 @@ def run_evaluate_in_memory(cfg: Dict[str, Any], split: str, use_case: str) -> Di
         label_col=dataset_cfg["label_col"],
         id_col=dataset_cfg["id_col"],
         text_col=dataset_cfg.get("text_col"),
+        time_col=dataset_cfg.get("time_col"),
     )
     with timings.stage("load_data"):
         df = loader.load()
@@ -96,16 +97,12 @@ def run_evaluate_in_memory(cfg: Dict[str, Any], split: str, use_case: str) -> Di
     splits = {"train": bundle.train, "val": bundle.val, "test": bundle.test}
     df_split = splits[split].reset_index(drop=True)
 
-    X, y = _feature_columns(df_split, dataset_cfg["label_col"], dataset_cfg["id_col"], dataset_cfg.get("text_col"))
-    # Features for slicing/error surfacing include id + optional text + any metadata columns
-    feat_cols = [dataset_cfg["id_col"]]
-    if dataset_cfg.get("text_col"):
-        feat_cols.append(dataset_cfg["text_col"])
-    # Keep any "metadata" columns (non-numeric are fine for slicing rules)
-    meta_cols = [c for c in df_split.columns if c not in set(X.columns.tolist() + [dataset_cfg["label_col"]])]
-    # Avoid duplicates
-    feat_cols = list(dict.fromkeys(feat_cols + meta_cols))
-    features = df_split[feat_cols].copy()
+    # Slicing / error-surfacing frame: keep every raw column except the label
+    # (id, text, and business metadata such as region / amount / event_time) so
+    # rule-based slices and fairness analysis can reference them directly. The
+    # model's numeric feature matrix is separate and already baked into the saved
+    # predictions, so it does not need to be reconstructed here.
+    features = df_split.drop(columns=[dataset_cfg["label_col"]]).copy()
 
     # Load predictions (must exist)
     with timings.stage("load_predictions"):
@@ -170,7 +167,12 @@ def run_evaluate_in_memory(cfg: Dict[str, Any], split: str, use_case: str) -> Di
     drift = compute_drift_report(
         train_df=bundle.train,
         test_df=df_split,
-        exclude_cols=[dataset_cfg["label_col"], dataset_cfg["id_col"], dataset_cfg.get("text_col", "")],
+        exclude_cols=[
+            dataset_cfg["label_col"],
+            dataset_cfg["id_col"],
+            dataset_cfg.get("text_col", ""),
+            dataset_cfg.get("time_col", ""),
+        ],
         psi_warn=float(cfg.get("advanced", {}).get("drift", {}).get("psi_warn", 0.2)),
         tv_warn=float(cfg.get("advanced", {}).get("drift", {}).get("tv_warn", 0.2)),
     )

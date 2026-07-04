@@ -11,17 +11,37 @@ def brier_score(y_true: np.ndarray, y_prob_pos: np.ndarray) -> float:
     return float(np.mean((y_prob_pos - y_true) ** 2))
 
 def expected_calibration_error(y_true: np.ndarray, y_prob_pos: np.ndarray, n_bins: int = 10) -> float:
-    # Simple ECE: bin by confidence, compare avg confidence vs empirical accuracy
+    """Expected Calibration Error (Guo et al., 2017).
+
+    Bins predictions by the *confidence of the predicted class* — max(p, 1-p) —
+    and, within each bin, measures the gap between that average confidence and the
+    empirical accuracy. The weighted sum of gaps is the ECE, in [0, ~0.5].
+
+    A common bug (which this replaces) is to bin by the raw positive-class
+    probability and compare its mean against 0.5-threshold accuracy. That inflates
+    the error massively on confidently-negative bins (mean p ≈ 0 vs accuracy ≈ 1),
+    producing implausible ECE values of 0.6-0.9 for well-calibrated models.
+    """
+    y_true = np.asarray(y_true)
+    y_prob_pos = np.asarray(y_prob_pos, dtype=float)
+    n = len(y_true)
+    if n == 0:
+        return float("nan")
+
+    y_pred = (y_prob_pos >= 0.5).astype(int)
+    confidence = np.maximum(y_prob_pos, 1.0 - y_prob_pos)  # in [0.5, 1.0]
+    correct = (y_pred == y_true).astype(float)
+
     bins = np.linspace(0.0, 1.0, n_bins + 1)
     ece = 0.0
     for i in range(n_bins):
-        lo, hi = bins[i], bins[i+1]
-        mask = (y_prob_pos >= lo) & (y_prob_pos < hi) if i < n_bins-1 else (y_prob_pos >= lo) & (y_prob_pos <= hi)
+        lo, hi = bins[i], bins[i + 1]
+        mask = (confidence >= lo) & (confidence < hi) if i < n_bins - 1 else (confidence >= lo) & (confidence <= hi)
         if not np.any(mask):
             continue
-        acc = np.mean(y_true[mask] == (y_prob_pos[mask] >= 0.5))
-        conf = np.mean(y_prob_pos[mask])
-        ece += np.abs(acc - conf) * (np.sum(mask) / len(y_true))
+        acc = float(np.mean(correct[mask]))
+        conf = float(np.mean(confidence[mask]))
+        ece += abs(acc - conf) * (int(np.sum(mask)) / n)
     return float(ece)
 
 

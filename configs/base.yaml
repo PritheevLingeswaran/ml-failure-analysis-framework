@@ -8,6 +8,11 @@ paths:
   outputs_dir: outputs
 
 data:
+  # How the raw CSV at paths.data_raw is produced by scripts/prepare_data.py:
+  #   synthetic              -> generated demo data (text/region/amount/time)
+  #   sklearn_breast_cancer  -> a real, bundled dataset (30 numeric measurements)
+  # To use your OWN data, point paths.data_raw at your CSV and skip prepare_data.
+  source: synthetic
   dataset:
     type: csv_classification
     label_col: label
@@ -27,7 +32,7 @@ models:
       type: sklearn_logreg
       params:
         C: 1.0
-        max_iter: 500
+        max_iter: 1000
     - name: rf
       type: sklearn_random_forest
       params:
@@ -111,6 +116,13 @@ api:
   port: 8000
   reload: true
   cache_ttl_sec: 180
+  # CORS: origins allowed to call the API directly from a browser.
+  cors_origins:
+    - "http://localhost:5173"
+    - "http://127.0.0.1:5173"
+  # Optional API-key auth. null = open (dev). Set a string, or the MLFA_API_KEY
+  # env var, to require an `X-API-Key` header on all data endpoints.
+  api_key: null
 
 advanced:
   drift:

@@ -21,6 +21,18 @@ _EXECUTOR = ThreadPoolExecutor(max_workers=2)
 _CACHE: Dict[str, Dict[str, Any]] = {}
 _JOBS: Dict[str, Dict[str, Any]] = {}
 _LOCK = threading.Lock()
+# Per-cache-key locks so concurrent requests for the same evaluation compute it
+# exactly once (single-flight) instead of stampeding the CPU-bound pipeline.
+_KEY_LOCKS: Dict[str, threading.Lock] = {}
+
+
+def _key_lock(key: str) -> threading.Lock:
+    with _LOCK:
+        lock = _KEY_LOCKS.get(key)
+        if lock is None:
+            lock = threading.Lock()
+            _KEY_LOCKS[key] = lock
+        return lock
 
 def _api_cfg(base_cfg: Dict[str, Any]) -> Dict[str, Any]:
     """Use a request-local config for API evaluation runs."""
@@ -53,19 +65,34 @@ def _cache_key(cfg: Dict[str, Any], use_case: str, split: str = "test") -> str:
     )
 
 
+def _cache_get_fresh(key: str, ttl: int) -> Dict[str, Any] | None:
+    with _LOCK:
+        hit = _CACHE.get(key)
+        if hit and (time.time() - float(hit["ts"])) <= ttl:
+            return hit["result"]
+    return None
+
+
 def _evaluate_cached(cfg: Dict[str, Any], use_case: str, split: str = "test") -> Dict[str, Any]:
     ttl = int(cfg.get("api", {}).get("cache_ttl_sec", 180))
     key = _cache_key(cfg, use_case, split=split)
-    now = time.time()
-    with _LOCK:
-        hit = _CACHE.get(key)
-        if hit and (now - float(hit["ts"])) <= ttl:
-            return hit["result"]
 
-    result = run_evaluate_in_memory(cfg, split=split, use_case=use_case)
-    with _LOCK:
-        _CACHE[key] = {"ts": now, "result": result}
-    return result
+    # Fast path: fresh cache hit, no locking.
+    cached = _cache_get_fresh(key, ttl)
+    if cached is not None:
+        return cached
+
+    # Slow path: single-flight. Only one thread computes for a given key; others
+    # block on the per-key lock and then read the value the winner cached. This
+    # prevents concurrent cold requests from each recomputing the ~6s pipeline.
+    with _key_lock(key):
+        cached = _cache_get_fresh(key, ttl)
+        if cached is not None:
+            return cached
+        result = run_evaluate_in_memory(cfg, split=split, use_case=use_case)
+        with _LOCK:
+            _CACHE[key] = {"ts": time.time(), "result": result}
+        return result
 
 @router.post("/evaluate", response_model=CompareResponse)
 def evaluate(req: EvaluateRequest, request: Request):

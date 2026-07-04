@@ -1,0 +1,37 @@
+# Real-data config: sklearn's Breast Cancer Wisconsin dataset (569 real cases,
+# 30 numeric measurements). Positive class = malignant (the costly miss).
+#
+# Run it exactly like the demo, just with this config:
+#   python scripts/run_all.py --config configs/real.yaml
+#   python scripts/run_api.py --config configs/real.yaml
+app:
+  env: real
+
+paths:
+  # Separate raw file so real data never clobbers the synthetic sample.
+  data_raw: data/raw/datasets/real.csv
+
+data:
+  source: sklearn_breast_cancer
+  dataset:
+    text_col: null          # this dataset has no free-text field
+    time_col: null          # ...and no timestamp
+
+models:
+  registry:
+    - name: logreg
+      type: sklearn_logreg
+      params:
+        C: 1.0
+        max_iter: 1000
+    - name: rf
+      type: sklearn_random_forest
+      params:
+        n_estimators: 300
+        random_state: 42
+
+decision:
+  default_use_case: diagnostic_screening
+
+api:
+  reload: false
