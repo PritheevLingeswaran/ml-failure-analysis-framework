@@ -7,6 +7,8 @@ import pandas as pd
 
 from sklearn.linear_model import LogisticRegression
 from sklearn.ensemble import RandomForestClassifier
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import StandardScaler
 
 from src.models.base import BaseModel
 
@@ -14,7 +16,15 @@ logger = logging.getLogger(__name__)
 
 class SklearnLogReg(BaseModel):
     def fit(self, X: pd.DataFrame, y: pd.Series) -> None:
-        self._model = LogisticRegression(**self.params)
+        # Standardize features before the linear model. Unscaled features (mixed
+        # magnitudes, one-hot columns) make lbfgs converge slowly or not at all;
+        # scaling is standard practice and makes the solver reliable.
+        self._model = Pipeline(
+            [
+                ("scaler", StandardScaler()),
+                ("clf", LogisticRegression(**self.params)),
+            ]
+        )
         self._model.fit(X, y)
 
     def predict_proba(self, X: pd.DataFrame) -> np.ndarray:

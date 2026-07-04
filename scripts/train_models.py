@@ -26,13 +26,21 @@ from src.evaluation_engine.predictions import save_predictions
 logger = logging.getLogger(__name__)
 
 
-def _drop_cols(df: pd.DataFrame, label_col: str, id_col: str, text_col: str | None) -> pd.DataFrame:
-    """Drop non-feature columns (label/id/text)."""
+def _drop_cols(
+    df: pd.DataFrame,
+    label_col: str,
+    id_col: str,
+    text_col: str | None,
+    time_col: str | None = None,
+) -> pd.DataFrame:
+    """Drop non-feature columns (label/id/text/time)."""
     cols = [label_col, id_col]
     if text_col:
         cols.append(text_col)
+    if time_col:
+        cols.append(time_col)
     out = df.drop(columns=[c for c in cols if c in df.columns], errors="ignore").copy()
-    # Time columns are for temporal splits/drift checks, not model features.
+    # Any remaining datetime columns are for temporal splits/drift, not features.
     dt_cols = out.select_dtypes(include=["datetime64[ns]", "datetime64[ns, UTC]"]).columns.tolist()
     if dt_cols:
         out = out.drop(columns=dt_cols, errors="ignore")
@@ -46,6 +54,7 @@ def _make_feature_schema(
     label_col: str,
     id_col: str,
     text_col: str | None,
+    time_col: str | None = None,
 ) -> pd.Index:
     """
     Build a stable feature schema (columns) across all splits.
@@ -56,9 +65,9 @@ def _make_feature_schema(
     """
     all_raw = pd.concat(
         [
-            _drop_cols(train_df, label_col, id_col, text_col),
-            _drop_cols(val_df, label_col, id_col, text_col),
-            _drop_cols(test_df, label_col, id_col, text_col),
+            _drop_cols(train_df, label_col, id_col, text_col, time_col),
+            _drop_cols(val_df, label_col, id_col, text_col, time_col),
+            _drop_cols(test_df, label_col, id_col, text_col, time_col),
         ],
         axis=0,
         ignore_index=True,
@@ -75,6 +84,7 @@ def _feature_columns(
     id_col: str,
     text_col: str | None,
     feature_cols: pd.Index,
+    time_col: str | None = None,
 ) -> Tuple[pd.DataFrame, pd.Series]:
     """
     Create numeric feature matrix + label vector.
@@ -82,7 +92,7 @@ def _feature_columns(
     - One-hot encodes categoricals (region etc.)
     - Reindexes to a stable schema
     """
-    X_raw = _drop_cols(df, label_col, id_col, text_col)
+    X_raw = _drop_cols(df, label_col, id_col, text_col, time_col)
     X_enc = pd.get_dummies(X_raw, drop_first=False, dtype=np.float32)
 
     # Align columns to the global schema
@@ -111,12 +121,14 @@ def main() -> None:
     label_col = dataset_cfg["label_col"]
     id_col = dataset_cfg["id_col"]
     text_col = dataset_cfg.get("text_col")
+    time_col = dataset_cfg.get("time_col")
 
     loader = CSVClassificationDataset(
         path=cfg["paths"]["data_raw"],
         label_col=label_col,
         id_col=id_col,
         text_col=text_col,
+        time_col=time_col,
     )
     df = loader.load()
 
@@ -133,16 +145,16 @@ def main() -> None:
     )
 
     # --- Build stable feature schema across splits (critical) ---
-    feature_cols = _make_feature_schema(bundle.train, bundle.val, bundle.test, label_col, id_col, text_col)
+    feature_cols = _make_feature_schema(bundle.train, bundle.val, bundle.test, label_col, id_col, text_col, time_col)
 
     models = build_models(cfg)
     processed_dir = Path(cfg["paths"]["data_processed_dir"])
     models_dir = ensure_dir(processed_dir / "models")
 
     for m in models:
-        Xtr, ytr = _feature_columns(bundle.train, label_col, id_col, text_col, feature_cols)
-        Xva, yva = _feature_columns(bundle.val, label_col, id_col, text_col, feature_cols)
-        Xte, yte = _feature_columns(bundle.test, label_col, id_col, text_col, feature_cols)
+        Xtr, ytr = _feature_columns(bundle.train, label_col, id_col, text_col, feature_cols, time_col)
+        Xva, yva = _feature_columns(bundle.val, label_col, id_col, text_col, feature_cols, time_col)
+        Xte, yte = _feature_columns(bundle.test, label_col, id_col, text_col, feature_cols, time_col)
 
         logger.info("Training model=%s on X=%s", m.name, Xtr.shape)
         m.fit(Xtr, ytr)

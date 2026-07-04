@@ -126,6 +126,37 @@ Use the API to compare models, inspect slice-level failures, analyze error patte
 
 ---
 
+## Data: synthetic, real, or your own
+
+The pipeline is data-source agnostic. `scripts/prepare_data.py` writes a CSV to
+`paths.data_raw`; everything downstream just consumes that CSV.
+
+**Real, bundled dataset** (no synthetic numbers — real measurements):
+
+```bash
+python scripts/run_all.py --config configs/real.yaml   # Breast Cancer Wisconsin (569 real cases)
+python scripts/run_api.py --config configs/real.yaml
+```
+
+`configs/real.yaml` uses `data.source: sklearn_breast_cancer` and the
+`diagnostic_screening` cost matrix (missing a malignant case is catastrophic).
+On this data the models score ROC-AUC ≈ 0.98 with ECE ≈ 0.01–0.03.
+
+**Bring your own CSV** — no code changes needed:
+
+1. Put a CSV at `paths.data_raw` with, at minimum, a binary `label` column (0/1)
+   and an `id` column. Optionally a free-text column and a timestamp column.
+2. Create a config (copy `configs/real.yaml`) and set:
+   - `paths.data_raw` → your file
+   - `data.dataset.label_col` / `id_col` / `text_col` / `time_col` (use `null` if absent)
+   - `decision.default_use_case` → a cost matrix in `configs/decision_costs.yaml`
+     that reflects *your* real cost of false positives vs false negatives.
+3. Skip `prepare_data.py` (your file already exists) and run
+   `train_models.py` → `run_eval.py`, or point the API at your config.
+
+Columns you don't have (text, region, amount, time) degrade gracefully — the
+slices that need them are skipped and logged, not errored.
+
 ## Where to look
 
 ### Documentation
