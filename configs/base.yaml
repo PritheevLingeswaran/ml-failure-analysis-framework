@@ -120,9 +120,16 @@ api:
   cors_origins:
     - "http://localhost:5173"
     - "http://127.0.0.1:5173"
-  # Optional API-key auth. null = open (dev). Set a string, or the MLFA_API_KEY
-  # env var, to require an `X-API-Key` header on all data endpoints.
+  # Optional API-key auth. null = open (local dev only). In any non-local env
+  # (APP_ENV != dev/local/test/ci) the app REFUSES to start without a key —
+  # set MLFA_API_KEY or api.api_key.
   api_key: null
+  # Rate limit applied per API key / client IP ("<count>/<second|minute|hour>").
+  # Override with RATE_LIMIT_DEFAULT. NOTE: in-memory per process — correct with a
+  # single worker; multi-worker sharing requires the Redis backend (persistence phase).
+  rate_limit_default: "120/minute"
+  # Reject request bodies larger than this many bytes (override: MAX_BODY_BYTES).
+  max_body_bytes: 1048576
 
 advanced:
   drift:
