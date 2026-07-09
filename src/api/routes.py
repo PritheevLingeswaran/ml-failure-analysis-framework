@@ -13,6 +13,7 @@ from src.schemas.api import EvaluateRequest, CompareResponse, SliceMetricsRespon
 from src.decision_engine.costs import load_costs
 from src.evaluation_engine.predictions import build_run_id
 from src.api.cache import Cache, build_cache
+from src.api import metrics
 
 from evaluation.evaluate import run_evaluate_in_memory
 
@@ -93,6 +94,7 @@ def _evaluate_cached(cfg: Dict[str, Any], use_case: str, split: str = "test") ->
     # Fast path: shared cache hit (in-memory or Redis), no locking.
     hit = cache.get(key)
     if hit is not None:
+        metrics.cache_hit()
         return hit
 
     # Slow path: single-flight per process. One thread computes for a given key;
@@ -100,8 +102,12 @@ def _evaluate_cached(cfg: Dict[str, Any], use_case: str, split: str = "test") ->
     with _key_lock(key):
         hit = cache.get(key)
         if hit is not None:
+            metrics.cache_hit()
             return hit
+        metrics.cache_miss()
+        logger.info("cache miss; computing evaluation use_case=%s split=%s", use_case, split)
         result = run_evaluate_in_memory(cfg, split=split, use_case=use_case)
+        metrics.eval_computed()
         cache.set(key, result, ttl)
         return result
 

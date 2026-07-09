@@ -1,6 +1,7 @@
 from __future__ import annotations
 import logging
 import logging.config
+import os
 from pathlib import Path
 from typing import Any, Dict
 from src.utils.config import load_yaml
@@ -30,3 +31,10 @@ def setup_logging(cfg: Dict[str, Any]) -> None:
     formatter = logging.Formatter("%(asctime)s | %(levelname)s | %(name)s | %(message)s")
     file_handler.setFormatter(formatter)
     logging.getLogger().addHandler(file_handler)
+
+    # Structured logging + per-request IDs. LOG_FORMAT=json emits JSON lines
+    # (for log aggregation in prod); otherwise the human-readable format is kept.
+    from src.api.observability import install_request_logging
+
+    json_logs = (os.environ.get("LOG_FORMAT") or cfg.get("logging", {}).get("format", "")).lower() == "json"
+    install_request_logging(json_logs=json_logs)

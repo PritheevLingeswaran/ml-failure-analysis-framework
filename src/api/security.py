@@ -91,12 +91,9 @@ def parse_rate(spec: str) -> Tuple[int, int]:
 
 
 class FixedWindowRateLimiter:
-    """Thread-safe in-memory fixed-window limiter.
+    """Thread-safe in-memory fixed-window limiter (single process only)."""
 
-    Correct within a single process. For multi-worker / multi-replica
-    deployments this must be backed by shared storage (Redis) — wired up in the
-    persistence phase; until then run a single worker or accept per-worker limits.
-    """
+    backend = "memory"
 
     def __init__(self, limit: int, window_sec: int):
         self.limit = limit
@@ -115,11 +112,68 @@ class FixedWindowRateLimiter:
             self._hits[key] = (ws, count)
             return count <= self.limit
 
+    def ping(self) -> bool:
+        return True
 
-def build_limiter(cfg: Dict[str, Any]) -> FixedWindowRateLimiter:
-    """Per-key/IP limiter. Tune with RATE_LIMIT_DEFAULT (e.g. '120/minute')."""
+
+class RedisRateLimiter:
+    """Distributed fixed-window limiter backed by Redis.
+
+    Per {key, window} it does an atomic INCR (and sets EXPIRE on first hit), so
+    the limit is enforced GLOBALLY across every worker/replica — unlike the
+    in-memory limiter which is per process. Fails OPEN: if Redis is unreachable
+    it degrades to a per-process in-memory count rather than rejecting traffic,
+    because the limiter must never be the thing that takes the API down.
+    """
+
+    backend = "redis"
+
+    def __init__(self, url: str, limit: int, window_sec: int, prefix: str = "mlfa:rl:"):
+        import redis  # local import; only needed when Redis is configured
+
+        self._client = redis.Redis.from_url(url, socket_connect_timeout=2, socket_timeout=2)
+        self.limit = limit
+        self.window = window_sec
+        self._prefix = prefix
+        self._fallback = FixedWindowRateLimiter(limit, window_sec)
+
+    def allow(self, key: str) -> bool:
+        now = int(time.time())
+        window_start = now - (now % self.window)
+        redis_key = f"{self._prefix}{key}:{window_start}"
+        try:
+            pipe = self._client.pipeline()
+            pipe.incr(redis_key)
+            pipe.expire(redis_key, self.window)
+            count, _ = pipe.execute()
+            return int(count) <= self.limit
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Redis rate-limit failed, failing open to in-memory: %s", e)
+            return self._fallback.allow(key)
+
+    def ping(self) -> bool:
+        try:
+            return bool(self._client.ping())
+        except Exception:  # noqa: BLE001
+            return False
+
+
+def build_limiter(cfg: Dict[str, Any]):
+    """Per-key/IP limiter. Redis-backed when REDIS_URL is set (shared across
+    workers), else in-memory. Tune with RATE_LIMIT_DEFAULT (e.g. '120/minute')."""
     spec = os.environ.get("RATE_LIMIT_DEFAULT") or cfg.get("api", {}).get("rate_limit_default", "120/minute")
     limit, window = parse_rate(spec)
+    url = os.environ.get("REDIS_URL") or cfg.get("api", {}).get("redis_url")
+    if url:
+        try:
+            lim = RedisRateLimiter(url, limit, window)
+            if lim.ping():
+                logger.info("Rate limiter: redis (shared across workers)")
+                return lim
+            logger.warning("REDIS_URL set but Redis unreachable; rate limiter falling back to in-memory.")
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Could not init Redis rate limiter (%s); using in-memory.", e)
+    logger.info("Rate limiter: in-memory (per process)")
     return FixedWindowRateLimiter(limit, window)
 
 
