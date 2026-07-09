@@ -1,5 +1,28 @@
-version: "3.8"
+# Local "prod-like" stack: API + Redis (shared cache) + Postgres (persistence).
+# Usage:  MLFA_API_KEY=dev-secret docker compose up --build
 services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: mlfa
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-mlfa}
+      POSTGRES_DB: mlfa
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mlfa"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
   api:
     build: .
     ports:
@@ -7,5 +30,21 @@ services:
     environment:
       - APP_ENV=prod
       - CONFIG_PATH=configs/prod.yaml
+      # Prod refuses to start without a key. Provide it via .env or your shell.
+      - MLFA_API_KEY=${MLFA_API_KEY:?MLFA_API_KEY must be set for prod}
+      - DATABASE_URL=postgresql+psycopg2://mlfa:${POSTGRES_PASSWORD:-mlfa}@postgres:5432/mlfa
+      - REDIS_URL=redis://redis:6379/0
+      - CORS_ORIGINS=${CORS_ORIGINS:-}
+      - RATE_LIMIT_DEFAULT=${RATE_LIMIT_DEFAULT:-120/minute}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     volumes:
       - ./outputs:/app/outputs
+      - uploads:/app/data/uploads
+
+volumes:
+  pgdata:
+  uploads:

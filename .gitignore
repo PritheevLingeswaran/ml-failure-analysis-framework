@@ -6,8 +6,11 @@ __pycache__/
 outputs/
 data/processed/
 data/raw/datasets/*.csv
+data/uploads/
 *.joblib
 *.log
+*.db
+*.sqlite3
 .DS_Store
 .tmp/
 .env

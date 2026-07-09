@@ -28,12 +28,13 @@ def _canned_result():
 
 
 @pytest.fixture(autouse=True)
-def _clear_cache():
-    routes._CACHE.clear()
-    routes._KEY_LOCKS.clear()
+def _clear_cache(monkeypatch):
+    # Isolate from any ambient auth/env config so these tests are deterministic.
+    for var in ["APP_ENV", "MLFA_API_KEY", "RATE_LIMIT_DEFAULT", "MAX_BODY_BYTES", "DATABASE_URL", "REDIS_URL"]:
+        monkeypatch.delenv(var, raising=False)
+    routes.reset_cache()
     yield
-    routes._CACHE.clear()
-    routes._KEY_LOCKS.clear()
+    routes.reset_cache()
 
 
 def test_single_flight_computes_once_under_concurrency(monkeypatch):

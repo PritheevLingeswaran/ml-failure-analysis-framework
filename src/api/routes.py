@@ -12,18 +12,38 @@ from fastapi import APIRouter, HTTPException, Request
 from src.schemas.api import EvaluateRequest, CompareResponse, SliceMetricsResponse, ErrorsResponse, RecommendResponse, QualityResponse
 from src.decision_engine.costs import load_costs
 from src.evaluation_engine.predictions import build_run_id
+from src.api.cache import Cache, build_cache
 
 from evaluation.evaluate import run_evaluate_in_memory
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 _EXECUTOR = ThreadPoolExecutor(max_workers=2)
-_CACHE: Dict[str, Dict[str, Any]] = {}
 _JOBS: Dict[str, Dict[str, Any]] = {}
 _LOCK = threading.Lock()
 # Per-cache-key locks so concurrent requests for the same evaluation compute it
-# exactly once (single-flight) instead of stampeding the CPU-bound pipeline.
+# exactly once (single-flight) WITHIN a process. Across workers the shared Redis
+# cache means each worker computes at most once, then all read the cached value;
+# fully cross-worker single-flight would need a distributed lock (future work).
 _KEY_LOCKS: Dict[str, threading.Lock] = {}
+_CACHE_OBJ: Cache | None = None
+
+
+def _get_cache(cfg: Dict[str, Any]) -> Cache:
+    global _CACHE_OBJ
+    if _CACHE_OBJ is None:
+        with _LOCK:
+            if _CACHE_OBJ is None:
+                _CACHE_OBJ = build_cache(cfg)
+    return _CACHE_OBJ
+
+
+def reset_cache() -> None:
+    """Test hook: drop the cache singleton and per-key locks."""
+    global _CACHE_OBJ
+    with _LOCK:
+        _CACHE_OBJ = None
+        _KEY_LOCKS.clear()
 
 
 def _key_lock(key: str) -> threading.Lock:
@@ -65,33 +85,24 @@ def _cache_key(cfg: Dict[str, Any], use_case: str, split: str = "test") -> str:
     )
 
 
-def _cache_get_fresh(key: str, ttl: int) -> Dict[str, Any] | None:
-    with _LOCK:
-        hit = _CACHE.get(key)
-        if hit and (time.time() - float(hit["ts"])) <= ttl:
-            return hit["result"]
-    return None
-
-
 def _evaluate_cached(cfg: Dict[str, Any], use_case: str, split: str = "test") -> Dict[str, Any]:
     ttl = int(cfg.get("api", {}).get("cache_ttl_sec", 180))
     key = _cache_key(cfg, use_case, split=split)
+    cache = _get_cache(cfg)
 
-    # Fast path: fresh cache hit, no locking.
-    cached = _cache_get_fresh(key, ttl)
-    if cached is not None:
-        return cached
+    # Fast path: shared cache hit (in-memory or Redis), no locking.
+    hit = cache.get(key)
+    if hit is not None:
+        return hit
 
-    # Slow path: single-flight. Only one thread computes for a given key; others
-    # block on the per-key lock and then read the value the winner cached. This
-    # prevents concurrent cold requests from each recomputing the ~6s pipeline.
+    # Slow path: single-flight per process. One thread computes for a given key;
+    # others block on the per-key lock, then read the value the winner cached.
     with _key_lock(key):
-        cached = _cache_get_fresh(key, ttl)
-        if cached is not None:
-            return cached
+        hit = cache.get(key)
+        if hit is not None:
+            return hit
         result = run_evaluate_in_memory(cfg, split=split, use_case=use_case)
-        with _LOCK:
-            _CACHE[key] = {"ts": time.time(), "result": result}
+        cache.set(key, result, ttl)
         return result
 
 @router.post("/evaluate", response_model=CompareResponse)

@@ -1,0 +1,3 @@
+# Shell scripts and entrypoints must stay LF so they run inside Linux containers.
+*.sh text eol=lf
+docker-entrypoint.sh text eol=lf
