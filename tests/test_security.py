@@ -15,8 +15,7 @@ def base_cfg():
 def _clean_env(monkeypatch):
     for var in ["APP_ENV", "MLFA_API_KEY", "CORS_ORIGINS", "RATE_LIMIT_DEFAULT", "MAX_BODY_BYTES"]:
         monkeypatch.delenv(var, raising=False)
-    routes._CACHE.clear()
-    routes._KEY_LOCKS.clear()
+    routes.reset_cache()
 
 
 def test_prod_without_key_fails_fast(base_cfg):

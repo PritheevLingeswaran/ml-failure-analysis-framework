@@ -6,7 +6,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from src.api.routes import router as api_router
+from src.api.persistence_routes import router as persistence_router
 from src.api import security
+from src.db import base as db
 
 logger = logging.getLogger(__name__)
 
@@ -93,5 +95,15 @@ def create_app(cfg: Dict[str, Any]) -> FastAPI:
         )
 
     app.include_router(api_router)
+    app.include_router(persistence_router)
+
+    # Schema: in local envs auto-create tables for zero-setup demoing; in
+    # non-local envs the schema is owned by Alembic migrations (run at deploy).
+    if not security.auth_required(env):
+        try:
+            db.create_all(cfg)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("DB auto-create skipped: %s", e)
+
     logger.info("App created for env=%s (auth %s, rate=%s/%ss).", env, "on" if api_key else "off", limiter.limit, limiter.window)
     return app

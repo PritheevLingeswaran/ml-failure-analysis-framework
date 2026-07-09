@@ -130,6 +130,14 @@ api:
   rate_limit_default: "120/minute"
   # Reject request bodies larger than this many bytes (override: MAX_BODY_BYTES).
   max_body_bytes: 1048576
+  # Evaluation cache backend. null/absent = in-memory (per process). Set a
+  # redis:// URL (or REDIS_URL env) to share the cache across workers/replicas.
+  redis_url: null
+
+# Persistence. null/absent = local SQLite file (data/app.db); set a
+# postgresql://... URL (or DATABASE_URL env) for Postgres in production.
+db:
+  url: null
 
 advanced:
   drift:

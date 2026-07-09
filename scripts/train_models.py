@@ -109,14 +109,12 @@ def _feature_columns(
     return X, y
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--config", required=True)
-    args = parser.parse_args()
+def run_training(cfg: dict) -> None:
+    """Train all configured models and persist per-split predictions.
 
-    cfg = load_config(args.config)
-    setup_logging(cfg)
-
+    Extracted from main() so the API (/runs) can train on an uploaded dataset by
+    passing a config whose paths.data_raw points at the uploaded file.
+    """
     dataset_cfg = cfg["data"]["dataset"]
     label_col = dataset_cfg["label_col"]
     id_col = dataset_cfg["id_col"]
@@ -187,6 +185,16 @@ def main() -> None:
 
             save_path = save_predictions(cfg, df_pred, model_name=m.name, split=split_name)
             logger.info("Saved predictions: %s", save_path)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--config", required=True)
+    args = parser.parse_args()
+
+    cfg = load_config(args.config)
+    setup_logging(cfg)
+    run_training(cfg)
 
 
 if __name__ == "__main__":

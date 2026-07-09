@@ -5,6 +5,13 @@ set -e
 CONFIG_PATH="${CONFIG_PATH:-configs/prod.yaml}"
 export CONFIG_PATH
 
+# Apply database migrations (idempotent). Uses DATABASE_URL if set, else the
+# default SQLite file. Skip with SKIP_MIGRATIONS=1.
+if [ "${SKIP_MIGRATIONS:-0}" != "1" ]; then
+  echo "[entrypoint] applying database migrations (alembic upgrade head)..."
+  python -m alembic upgrade head
+fi
+
 # Bootstrap the data pipeline only when the predictions this config needs are
 # absent. If you mount real data + trained models, this is skipped and the
 # container serves them immediately. Set SKIP_BOOTSTRAP=1 to always skip.
