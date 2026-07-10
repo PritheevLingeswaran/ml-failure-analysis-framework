@@ -162,20 +162,21 @@ class Evaluator:
                 with timing_collector.stage("plotting"):
                     plot_all(self.cfg, per_model=per_model, comparison=comparison, decision=decision)
 
-        # Persist machine-readable summary
-        outputs = Path(self.cfg["paths"]["outputs_dir"])
-        ensure_dir(outputs / "metrics")
-        ensure_dir(outputs / "reports")
-
-        if timing_collector is None:
-            write_json(outputs / "metrics" / f"comparison__{run_id}__{split}.json", comparison)
-            write_json(outputs / "metrics" / f"decision__{run_id}__{split}.json", decision)
-            write_json(outputs / "reports" / f"errors__{run_id}__{split}.json", errors)
-        else:
-            with timing_collector.stage("write_outputs"):
+        # Persist machine-readable summary (skipped on the API/request path,
+        # which returns JSON in-memory — see outputs.write_artifacts).
+        if self.cfg.get("outputs", {}).get("write_artifacts", True):
+            outputs = Path(self.cfg["paths"]["outputs_dir"])
+            ensure_dir(outputs / "metrics")
+            ensure_dir(outputs / "reports")
+            if timing_collector is None:
                 write_json(outputs / "metrics" / f"comparison__{run_id}__{split}.json", comparison)
                 write_json(outputs / "metrics" / f"decision__{run_id}__{split}.json", decision)
                 write_json(outputs / "reports" / f"errors__{run_id}__{split}.json", errors)
+            else:
+                with timing_collector.stage("write_outputs"):
+                    write_json(outputs / "metrics" / f"comparison__{run_id}__{split}.json", comparison)
+                    write_json(outputs / "metrics" / f"decision__{run_id}__{split}.json", decision)
+                    write_json(outputs / "reports" / f"errors__{run_id}__{split}.json", errors)
 
         overall = {"run_id": run_id, "split": split, "comparison": comparison}
         slices = self._collect_slice_table(per_model)

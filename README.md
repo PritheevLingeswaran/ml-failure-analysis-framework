@@ -178,6 +178,34 @@ slices that need them are skipped and logged, not errored.
 
 ---
 
+## Production deployment
+
+This runs as a hardened, deployable service — see **[DEPLOYMENT.md](DEPLOYMENT.md)**
+for the full guide. Highlights:
+
+- **Auth & limits:** mandatory API-key auth in non-local environments (fails to
+  start without a key), per-key/IP rate limiting (Redis-backed, shared across
+  workers), locked-down CORS, request/upload size caps.
+- **Shared state:** pluggable evaluation cache (in-memory → **Redis**) and
+  **Postgres** persistence via SQLAlchemy + Alembic migrations. Falls back to
+  in-memory + SQLite for zero-setup local dev.
+- **Data API:** `POST /datasets/upload`, `GET /datasets`, `POST /runs`,
+  `GET /runs` — upload a CSV, run a cost-aware analysis on it, browse history.
+- **Observability:** structured JSON logs with a per-request ID, Prometheus
+  `/metrics`, and `/healthz` (liveness) + `/readyz` (readiness: DB + Redis).
+- **Packaging:** multi-stage non-root Docker image (pinned deps),
+  `docker-compose.prod.yml`, and Kubernetes manifests under `k8s/`.
+
+```bash
+# Local prod-like stack (API + Redis + Postgres):
+export MLFA_API_KEY=your-secret
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up --build -d
+curl -s localhost:8000/readyz
+```
+
+CI runs the Python tests, the frontend build, a `pip-audit` dependency scan, and
+publishes the image to GHCR on merge to `main`.
+
 ## Non-goals (by design)
 
 This is not an AutoML system or a research notebook.  

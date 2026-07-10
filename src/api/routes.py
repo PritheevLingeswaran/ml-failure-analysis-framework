@@ -62,6 +62,9 @@ def _api_cfg(base_cfg: Dict[str, Any]) -> Dict[str, Any]:
     # API responses only need JSON payloads.
     cfg.setdefault("visualization", {})
     cfg["visualization"]["enabled"] = False
+    # Don't persist artifact files from the request path (in-memory JSON only).
+    cfg.setdefault("outputs", {})
+    cfg["outputs"]["write_artifacts"] = False
     return cfg
 
 def _resolve_use_case(cfg: Dict[str, Any], requested: str) -> str:

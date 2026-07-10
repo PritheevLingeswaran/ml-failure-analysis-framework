@@ -204,15 +204,20 @@ def run_evaluate_in_memory(cfg: Dict[str, Any], split: str, use_case: str) -> Di
         runtime={"total_sec": 0.0, "stages": timings.stage_totals()},
     )
 
+    # The API path returns JSON in-memory and does not need artifact files on
+    # disk; skipping them avoids needless I/O on the hot path (and the non-root
+    # container / read-only-fs write errors it caused). CLI runs keep writing.
+    write_artifacts = cfg.get("outputs", {}).get("write_artifacts", True)
     outputs = Path(cfg["paths"]["outputs_dir"])
-    ensure_dir(outputs / "metrics")
-    ensure_dir(outputs / "reports")
-    with timings.stage("write_outputs"):
-        write_json(outputs / "metrics" / f"eval_quality__{result.run_id}__{split}.json", eval_quality)
-        (outputs / "reports" / f"eval_quality__{result.run_id}__{split}.md").write_text(
-            render_eval_quality_markdown(eval_quality),
-            encoding="utf-8",
-        )
+    if write_artifacts:
+        ensure_dir(outputs / "metrics")
+        ensure_dir(outputs / "reports")
+        with timings.stage("write_outputs"):
+            write_json(outputs / "metrics" / f"eval_quality__{result.run_id}__{split}.json", eval_quality)
+            (outputs / "reports" / f"eval_quality__{result.run_id}__{split}.md").write_text(
+                render_eval_quality_markdown(eval_quality),
+                encoding="utf-8",
+            )
 
     total_runtime_sec = round(perf_counter() - run_start, 6)
     runtime = {
@@ -227,12 +232,13 @@ def run_evaluate_in_memory(cfg: Dict[str, Any], split: str, use_case: str) -> Di
         "stage_totals": runtime["stages"],
         "events": timings.events_payload(),
     }
-    write_json(outputs / "metrics" / f"eval_quality__{result.run_id}__{split}.json", eval_quality)
-    (outputs / "reports" / f"eval_quality__{result.run_id}__{split}.md").write_text(
-        render_eval_quality_markdown(eval_quality),
-        encoding="utf-8",
-    )
-    write_json(outputs / "metrics" / f"timings__{result.run_id}__{split}.json", timings_payload)
+    if write_artifacts:
+        write_json(outputs / "metrics" / f"eval_quality__{result.run_id}__{split}.json", eval_quality)
+        (outputs / "reports" / f"eval_quality__{result.run_id}__{split}.md").write_text(
+            render_eval_quality_markdown(eval_quality),
+            encoding="utf-8",
+        )
+        write_json(outputs / "metrics" / f"timings__{result.run_id}__{split}.json", timings_payload)
     logger.info(
         "total_runtime_sec=%.6f stage_breakdown=%s",
         total_runtime_sec,
