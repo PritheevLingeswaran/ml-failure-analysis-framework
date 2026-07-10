@@ -1,5 +1,18 @@
+.git
 .venv
 __pycache__
+.pytest_cache
+*.pyc
+# Not needed in the API runtime image:
+frontend
+tests
+node_modules
+# Generated / local data (regenerated or mounted at runtime):
 outputs
 data/processed
-.git
+data/uploads
+data/raw/datasets
+*.joblib
+*.log
+app.db
+data/app.db

@@ -1,0 +1,40 @@
+# Runs Alembic migrations ONCE per release (not per pod), so concurrent app
+# replicas never race the schema. Re-run on each deploy; it's idempotent.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: mlfa-migrate
+spec:
+  backoffLimit: 3
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        app: mlfa
+        component: migrate
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: migrate
+          image: mlfa:latest # kustomize overrides the tag
+          command: ["python", "-m", "alembic", "upgrade", "head"]
+          envFrom:
+            - secretRef:
+                name: mlfa-secrets
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"

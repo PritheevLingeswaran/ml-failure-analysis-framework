@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mlfa-config
+data:
+  APP_ENV: "prod"
+  CONFIG_PATH: "configs/prod.yaml"
+  LOG_FORMAT: "json"
+  RATE_LIMIT_DEFAULT: "120/minute"
+  # Comma-separated allow-list. Empty = no cross-origin browser access.
+  CORS_ORIGINS: ""
+  # The Job runs migrations once per release; app pods must not each re-run them.
+  SKIP_MIGRATIONS: "1"
+  # Prod serves real, pre-trained data (mounted / object storage), not demo bootstrap.
+  SKIP_BOOTSTRAP: "1"
