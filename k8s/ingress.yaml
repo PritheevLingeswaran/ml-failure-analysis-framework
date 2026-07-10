@@ -1,0 +1,24 @@
+# Example Ingress. Adjust host, ingressClassName, and TLS to your cluster
+# (cert-manager annotation shown). Delete if you expose via a LoadBalancer/mesh.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: mlfa-api
+  annotations:
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts: ["mlfa.example.com"]
+      secretName: mlfa-tls
+  rules:
+    - host: mlfa.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: mlfa-api
+                port:
+                  number: 80

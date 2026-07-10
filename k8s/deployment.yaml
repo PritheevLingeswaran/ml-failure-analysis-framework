@@ -1,0 +1,80 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mlfa-api
+  labels:
+    app: mlfa
+    component: api
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: mlfa
+      component: api
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        app: mlfa
+        component: api
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8000"
+        prometheus.io/path: "/metrics"
+    spec:
+      # Pod-level hardening (passes k8s "restricted" PodSecurity).
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: api
+          image: mlfa:latest # kustomize overrides the tag
+          command: ["python", "-m", "uvicorn", "src.api.asgi:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2"]
+          ports:
+            - name: http
+              containerPort: 8000
+          envFrom:
+            - configMapRef:
+                name: mlfa-config
+            - secretRef:
+                name: mlfa-secrets
+          # Liveness: restart a hung process. Readiness: pull from the Service's
+          # endpoints if deps (DB/Redis) are unreachable, WITHOUT killing the pod.
+          startupProbe:
+            httpGet: { path: /healthz, port: http }
+            failureThreshold: 30
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 15
+            timeoutSeconds: 3
+          readinessProbe:
+            httpGet: { path: /readyz, port: http }
+            periodSeconds: 10
+            timeoutSeconds: 3
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "1000m"
+              memory: "1536Mi"
+          volumeMounts:
+            # Writable scratch for the sqlite fallback / local artifacts. Real
+            # data + trained models come from a PVC or object storage in prod.
+            - name: data
+              mountPath: /app/data
+      volumes:
+        - name: data
+          emptyDir: {}

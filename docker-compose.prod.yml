@@ -1,0 +1,40 @@
+# Production override. Layer it on top of the base compose:
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# Differences from the base (local) compose:
+#  - runs a pre-built image (set IMAGE=...) rather than building locally
+#  - multiple uvicorn workers behind the shared Redis cache/limiter
+#  - restart policy + resource limits
+#  - JSON logs
+# In real production you also mount real data/models and set SKIP_BOOTSTRAP=1;
+# here bootstrap stays on so the stack is runnable for a demo.
+services:
+  api:
+    image: ${IMAGE:-mlfa:latest}
+    restart: always
+    command: ["python", "-m", "uvicorn", "src.api.asgi:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "${WORKERS:-2}"]
+    environment:
+      - LOG_FORMAT=json
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 2G
+        reservations:
+          cpus: "0.5"
+          memory: 512M
+
+  postgres:
+    restart: always
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+
+  redis:
+    restart: always
+    command: ["redis-server", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
+    deploy:
+      resources:
+        limits:
+          memory: 320M
