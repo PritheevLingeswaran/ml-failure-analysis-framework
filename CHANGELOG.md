@@ -48,8 +48,9 @@
 - Cross-worker single-flight uses the shared Redis cache (each worker computes at
   most once); a fully distributed lock is not implemented.
 - **`/runs` is synchronous and retrains per call**; a production build would make
-  it async (job queue) and cache trained models per dataset. Concurrent `/runs`
-  on the *same* dataset currently race on the shared predictions directory.
+  it async (job queue) and cache trained models per dataset. (The same-dataset
+  *race condition* is fixed — concurrent runs are now serialized by a distributed
+  lock, Redis-backed cross-worker, per-process fallback. See `src/api/locks.py`.)
 - **Image size (~940 MB) left unoptimized on purpose**: the size is dominated by
   the scientific-stack wheels (numpy/pandas/scipy/scikit-learn/matplotlib), not
   build tooling — the multi-stage build already strips compilers/caches. Further
