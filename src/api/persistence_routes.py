@@ -131,6 +131,7 @@ def _cfg_for_dataset(base_cfg: Dict[str, Any], ds: Dataset) -> Dict[str, Any]:
     cfg["data"]["dataset"]["text_col"] = None
     cfg["data"]["dataset"]["time_col"] = None
     cfg.setdefault("visualization", {})["enabled"] = False
+    cfg.setdefault("outputs", {})["write_artifacts"] = False
     return cfg
 
 
