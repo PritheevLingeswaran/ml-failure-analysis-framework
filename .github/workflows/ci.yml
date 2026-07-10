@@ -94,6 +94,10 @@ jobs:
       packages: write
     steps:
       - uses: actions/checkout@v4
+      # Required for the `type=gha` build cache: it needs the docker-container
+      # buildx driver. Without this the default docker driver rejects the cache
+      # exporter and the job fails within seconds (before the build even starts).
+      - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
         with:
           registry: ghcr.io
