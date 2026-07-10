@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field
 
 from src.db import base as db
 from src.db.models import AnalysisRun, Dataset
+from src.api import locks
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -170,44 +171,59 @@ def create_run(req: RunRequest, request: Request) -> Dict[str, Any]:
     else:
         raise HTTPException(status_code=422, detail=f"Unknown use_case '{requested}'. Available: {sorted(use_cases)}")
 
-    started = perf_counter()
-    try:
-        if needs_training:
-            trainer.run_training(cfg)
-        result = run_evaluate_in_memory(cfg, split="test", use_case=use_case)
-        decision = result["decision"]
-        blr = result["eval_quality"]["business_loss_reduction"]
-        summary = {
-            "winner": result["comparison"].get("winner"),
-            "ranking": result["comparison"].get("ranking"),
-            "recommended_model": decision.get("recommended_model"),
-            "recommended_threshold": decision.get("recommended_threshold"),
-            "business_loss_reduction": blr,
-        }
-        row = AnalysisRun(
-            id=run_id, dataset_id=dataset_id, use_case=use_case, status="completed",
-            winner_model=decision.get("recommended_model"),
-            recommended_threshold=decision.get("recommended_threshold"),
-            reduction_pct=blr.get("reduction_pct"),
-            runtime_sec=round(perf_counter() - started, 3),
-            summary=summary,
-        )
-    except Exception as e:  # noqa: BLE001
-        logger.exception("Analysis run %s failed", run_id)
-        row = AnalysisRun(
-            id=run_id, dataset_id=dataset_id, use_case=use_case, status="failed",
-            runtime_sec=round(perf_counter() - started, 3), error=str(e)[:1024],
-        )
+    def _execute() -> Dict[str, Any]:
+        started = perf_counter()
+        try:
+            if needs_training:
+                trainer.run_training(cfg)
+            result = run_evaluate_in_memory(cfg, split="test", use_case=use_case)
+            decision = result["decision"]
+            blr = result["eval_quality"]["business_loss_reduction"]
+            summary = {
+                "winner": result["comparison"].get("winner"),
+                "ranking": result["comparison"].get("ranking"),
+                "recommended_model": decision.get("recommended_model"),
+                "recommended_threshold": decision.get("recommended_threshold"),
+                "business_loss_reduction": blr,
+            }
+            row = AnalysisRun(
+                id=run_id, dataset_id=dataset_id, use_case=use_case, status="completed",
+                winner_model=decision.get("recommended_model"),
+                recommended_threshold=decision.get("recommended_threshold"),
+                reduction_pct=blr.get("reduction_pct"),
+                runtime_sec=round(perf_counter() - started, 3),
+                summary=summary,
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.exception("Analysis run %s failed", run_id)
+            row = AnalysisRun(
+                id=run_id, dataset_id=dataset_id, use_case=use_case, status="failed",
+                runtime_sec=round(perf_counter() - started, 3), error=str(e)[:1024],
+            )
+            with db.session_scope(base_cfg) as s:
+                s.add(row)
+                s.flush()
+            raise HTTPException(status_code=500, detail={"run_id": run_id, "error": str(e)})
+
         with db.session_scope(base_cfg) as s:
             s.add(row)
             s.flush()
-            out = row.to_dict()
-        raise HTTPException(status_code=500, detail={"run_id": run_id, "error": str(e)})
+            return row.to_dict()
 
-    with db.session_scope(base_cfg) as s:
-        s.add(row)
-        s.flush()
-        return row.to_dict()
+    # Serialize concurrent runs on the SAME dataset (they share a run-id and
+    # would race on the shared predictions dir). Different datasets run in
+    # parallel. Bundled-data runs don't train, so they need no lock.
+    if needs_training:
+        lock_mgr = locks.get_lock_manager(base_cfg)
+        try:
+            with lock_mgr.lock(f"dataset:{dataset_id}"):
+                return _execute()
+        except locks.LockBusy:
+            raise HTTPException(
+                status_code=409,
+                detail=f"A run for dataset '{dataset_id}' is already in progress; retry shortly.",
+            )
+    return _execute()
 
 
 @router.get("/runs")
